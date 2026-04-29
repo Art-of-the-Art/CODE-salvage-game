@@ -1,0 +1,11 @@
+
+Will SendMessage() to GameObject: 
+    OnDeviceLost, OnDeviceRegained, OnControlsChanged, OnNavigate,
+    OnMove, OnCrouch, OnJump, OnLook, OnAttack, OnSprint, OnInteract, 
+    OnPrevious, OnNext, 
+    OnSubmit, OnCancel, 
+    OnPoint, OnClick, 
+    OnRightClick, OnMiddleClick, OnScrollWheel, 
+    OnTracked DevicePosition, OnTrackedDeviceOrientation
+
+some
