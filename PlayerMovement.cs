@@ -72,13 +72,13 @@ public class PlayerMovement : MonoBehaviour
         // --- Выход из текущего состояния ---
         switch (currentState)
         {
-            case PlayerState.Grounded:
+            case MoveState.Grounded:
             // ничего
             break;
-            case PlayerState.Airborne:
+            case MoveState.Airborne:
             // ничего
             break;
-            case PlayerState.Climbing:
+            case MoveState.Climbing:
             currentWall = null;
             break;
         }
@@ -86,13 +86,13 @@ public class PlayerMovement : MonoBehaviour
         // --- Вход в новое состояние ---
         switch (newState)
         {
-            case PlayerState.Grounded:
+            case MoveState.Grounded:
             // ничего
             break;
-            case PlayerState.Airborne:
+            case MoveState.Airborne:
             // ничего
             break;
-            case PlayerState.Climbing:
+            case MoveState.Climbing:
             currentVelocity = Vector3.zero;
             rb.linearVelocity = Vector3.zero;
             break;
@@ -149,21 +149,24 @@ public class PlayerMovement : MonoBehaviour
                 ApplyJump();
                 SolveModelRotation();
                 if (!isGrounded)
-                    SwitchState(Airborne);
+                    switchState(MoveState.Airborne);
+                break;
 
             case MoveState.Airborne:
                 SolveVelocity();
                 ApplyGravity();
                 SolveModelRotation();
-                if (isGrounde && currentVelocity.y <= 0)
-                    SwitchState(Grounded);
+                if (isGrounded && currentVelocity.y <= 0)
+                    switchState(MoveState.Grounded);
+                break;
 
             case MoveState.Climbing:
                 ApplyWallDelta();
                 if(currentWall == null)
-                    SwitchState(Airborne);
+                    switchState(MoveState.Airborne);
                 if (isGrounded)
-                    SwitchState(Grounded);
+                    switchState(MoveState.Grounded);
+                break;
         }
         rb.linearVelocity = currentVelocity;
         HandleFrontDetection();
