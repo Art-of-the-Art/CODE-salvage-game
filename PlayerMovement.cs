@@ -26,6 +26,7 @@ public class PlayerMovement : MonoBehaviour
     [Header("Checks and detections")]
     [SerializeField] LayerMask groundLayer;
     [SerializeField] LayerMask detectionLayer;
+    [SerializeField] LayerMask climbableLayer;
     [SerializeField] float groundCheckDistance = 1.2f;
     [SerializeField] float detectionDistance = 1.2f;
     [SerializeField] float UpperRayHeightOffset = 0.8f;
@@ -174,7 +175,7 @@ public class PlayerMovement : MonoBehaviour
 
     void ReadInput() // Every update cheks pressed buttons
     {
-        if(currentState == MoveState.Сlimbing)
+        if(currentState == MoveState.Climbing)
         {
             moveInput.y = 0; // Disable vertical movement input while climbing
         }
@@ -186,9 +187,9 @@ public class PlayerMovement : MonoBehaviour
             case MoveState.Grounded:
                 if (Keyboard.current.spaceKey.wasPressedThisFrame)
                     jumpRequested = true;
-                if (Input.GetKeyDown(KeyCode.E) 
+                if (Keyboard.current.eKey.wasPressedThisFrame
                     && LowerFrontHit.collider != null 
-                    && LowerFrontHit.collider.CompareTag("Climbable")
+                    && ((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) != 0
                     && Vector3.Angle(LowerFrontHit.normal, Vector3.up) > 60f
                     )
                     AttachToWall(LowerFrontHit);
@@ -196,10 +197,10 @@ public class PlayerMovement : MonoBehaviour
                 break;
             case MoveState.Airborne:
                 break;
-            //case MoveState.Climbing:
-                //if (Keyboard.current.spaceKey.wasPressedThisFrame)
-                    //HandleClimbJump();
-                //break;
+            case MoveState.Climbing:
+                if (Keyboard.current.spaceKey.wasPressedThisFrame)
+                    DetachFromWall();
+                break;
         }
     }
 
