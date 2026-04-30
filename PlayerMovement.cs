@@ -174,7 +174,7 @@ public class PlayerMovement : MonoBehaviour
 
     void ReadInput() // Every update cheks pressed buttons
     {
-        if(currentState == MoveState.Grounded || currentState == MoveState.Airborne)
+        if(currentState == MoveState.Сlimbing)
         {
             moveInput.y = 0; // Disable vertical movement input while climbing
         }
