@@ -33,7 +33,9 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] float LowerRayHeightOffset = 0.25f;
 
     [Header("Climbing")]
-    [SerializeField] float autoStickVelocityThreshold = 1f;
+    [SerializeField] float autoStickVelocityThreshold = 2f;
+    [SerializeField] float wallOffset = 0.1f;
+    [SerializeField] float climbSpeed = 2f;
 
     // Objects to affect:
     Rigidbody rb;
@@ -62,6 +64,9 @@ public class PlayerMovement : MonoBehaviour
     Transform currentWall;
     Vector3 lastWallPosition;
     Quaternion lastWallRotation;
+    Vector3 wallUp;
+    Vector3 wallRight;
+    Vector3 delta;
 
     enum MoveState
     {
@@ -152,8 +157,8 @@ public class PlayerMovement : MonoBehaviour
                 ApplyGravity();
                 ApplyJump();
                 SolveModelRotation();
-                if (moveInput.sqrMagnitude > autoStickVelocityThreshold)
-                    ApplyAutoStick();
+                //if (moveInput.sqrMagnitude > 0.01f)
+                //    ApplyAutoStick();
                 if (!isGrounded)
                     switchState(MoveState.Airborne);
                 break;
@@ -169,6 +174,7 @@ public class PlayerMovement : MonoBehaviour
 
             case MoveState.Climbing:
                 ApplyWallDelta();
+                MoveOnWall();
                 SolveClimbRotation();
                 if(currentWall == null)
                     switchState(MoveState.Airborne);
@@ -182,29 +188,16 @@ public class PlayerMovement : MonoBehaviour
 
     void ReadInput() // Every update cheks pressed buttons
     {
-        if(currentState == MoveState.Climbing)
-        {
-            moveInput.y = 0; // Disable vertical movement input while climbing
-        }
-
         switch(currentState)
         {
             case MoveState.Grounded:
                 if (Keyboard.current.spaceKey.wasPressedThisFrame)
                     jumpRequested = true;
-                if (LowerFrontHit.collider != null 
-                    && ((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) != 0
-                    && Vector3.Angle(LowerFrontHit.normal, Vector3.up) > 60f
-                    )
-                    AttachToWall(LowerFrontHit);
                 break;
+
             case MoveState.Airborne:
-                if (LowerFrontHit.collider != null 
-                    && ((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) != 0
-                    && Vector3.Angle(LowerFrontHit.normal, Vector3.up) > 60f
-                    )
-                    AttachToWall(LowerFrontHit);
                 break;
+
             case MoveState.Climbing:
                 if (Keyboard.current.spaceKey.wasPressedThisFrame)
                     DetachFromWall();
@@ -332,14 +325,14 @@ public class PlayerMovement : MonoBehaviour
 
     void ApplyAutoStick() // If the player is close to the ground and moving downwards, apply a small downward velocity to keep them grounded
     {
-        if (UpperFrontHit.collider == null)
+        if (LowerFrontHit.collider == null)
             return;
-        else if (UpperFrontHit.collider != null 
+        else if (LowerFrontHit.collider != null 
             && ((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) != 0
             && Vector3.Angle(LowerFrontHit.normal, Vector3.up) > 60f
             && Vector3.Dot(currentVelocity, -LowerFrontHit.normal) >= autoStickVelocityThreshold
             )
-            AttachToWall(UpperFrontHit);
+            AttachToWall(LowerFrontHit);
     }
 
     void CheckGround() // Raycasts downward to check if the character is grounded, update isGrounded accordingly
@@ -382,7 +375,7 @@ public class PlayerMovement : MonoBehaviour
         currentVelocity = Vector3.zero;
         rb.linearVelocity = Vector3.zero;
 
-        transform.position = surfacePoint + surfaceNormal * 0.5f; // Adjust the offset as needed
+        transform.position = surfacePoint + surfaceNormal * wallOffset; // Adjust the offset as needed
         switchState(MoveState.Climbing);
     }
 
@@ -410,6 +403,27 @@ public class PlayerMovement : MonoBehaviour
 
         lastWallPosition = currentWall.position;
         lastWallRotation = currentWall.rotation;
+        return;
+    }
+
+    void MoveOnWall()
+    {
+        wallUp = Vector3.ProjectOnPlane(Vector3.up, surfaceNormal).normalized;
+        wallRight = Vector3.Cross(wallUp, surfaceNormal).normalized;
+        delta = (wallRight * moveInput.x + wallUp * moveInput.y) * climbSpeed * Time.fixedDeltaTime;
+        transform.position += delta;
+
+        if(Physics.Raycast(transform.position, -surfaceNormal, out RaycastHit hit, wallOffset * 1.5f, climbableLayer))
+        {
+            surfaceNormal = hit.normal;
+            surfacePoint = hit.point;
+            transform.position = hit.point + hit.normal * wallOffset;
+        }
+        else
+        {
+            DetachFromWall();
+            return;
+        }
     }
 
 
