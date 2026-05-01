@@ -32,6 +32,9 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] float UpperRayHeightOffset = 0.8f;
     [SerializeField] float LowerRayHeightOffset = 0.25f;
 
+    [Header("Climbing")]
+    [SerializeField] float autoStickVelocityThreshold = 1f;
+
     // Objects to affect:
     Rigidbody rb;
     Animator anim;
@@ -149,6 +152,8 @@ public class PlayerMovement : MonoBehaviour
                 ApplyGravity();
                 ApplyJump();
                 SolveModelRotation();
+                if (moveInput.sqrMagnitude > autoStickVelocityThreshold)
+                    ApplyAutoStick();
                 if (!isGrounded)
                     switchState(MoveState.Airborne);
                 break;
@@ -157,6 +162,7 @@ public class PlayerMovement : MonoBehaviour
                 SolveVelocity();
                 ApplyGravity();
                 SolveModelRotation();
+                ApplyAutoStick();
                 if (isGrounded && currentVelocity.y <= 0)
                     switchState(MoveState.Grounded);
                 break;
@@ -181,22 +187,23 @@ public class PlayerMovement : MonoBehaviour
             moveInput.y = 0; // Disable vertical movement input while climbing
         }
 
-
-
         switch(currentState)
         {
             case MoveState.Grounded:
                 if (Keyboard.current.spaceKey.wasPressedThisFrame)
                     jumpRequested = true;
-                if (Keyboard.current.eKey.wasPressedThisFrame
-                    && LowerFrontHit.collider != null 
+                if (LowerFrontHit.collider != null 
                     && ((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) != 0
                     && Vector3.Angle(LowerFrontHit.normal, Vector3.up) > 60f
                     )
                     AttachToWall(LowerFrontHit);
-                    
                 break;
             case MoveState.Airborne:
+                if (LowerFrontHit.collider != null 
+                    && ((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) != 0
+                    && Vector3.Angle(LowerFrontHit.normal, Vector3.up) > 60f
+                    )
+                    AttachToWall(LowerFrontHit);
                 break;
             case MoveState.Climbing:
                 if (Keyboard.current.spaceKey.wasPressedThisFrame)
@@ -323,6 +330,18 @@ public class PlayerMovement : MonoBehaviour
         isGrounded = false;
     }
 
+    void ApplyAutoStick() // If the player is close to the ground and moving downwards, apply a small downward velocity to keep them grounded
+    {
+        if (UpperFrontHit.collider == null)
+            return;
+        else if (UpperFrontHit.collider != null 
+            && ((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) != 0
+            && Vector3.Angle(LowerFrontHit.normal, Vector3.up) > 60f
+            && Vector3.Dot(currentVelocity, -LowerFrontHit.normal) >= autoStickVelocityThreshold
+            )
+            AttachToWall(UpperFrontHit);
+    }
+
     void CheckGround() // Raycasts downward to check if the character is grounded, update isGrounded accordingly
     {
         Vector3 rayOrigin = transform.position + Vector3.up * 0.5f;
@@ -414,7 +433,7 @@ public class PlayerMovement : MonoBehaviour
 
         if (Physics.Raycast(
             upperOrigin,
-            lastMoveDirection,
+            anim.transform.forward,
             out UpperFrontHit,
             detectionDistance,
             detectionLayer))
@@ -425,7 +444,7 @@ public class PlayerMovement : MonoBehaviour
 
         if (Physics.Raycast(
             lowerOrigin,
-            lastMoveDirection,
+            anim.transform.forward,
             out LowerFrontHit,
             detectionDistance,
             detectionLayer))
