@@ -36,9 +36,11 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] float autoStickVelocityThreshold = 0.6f;
     [SerializeField] float wallOffset = 2f;
     [SerializeField] float climbSpeed = 4f;
+    // MOUNTING
     [SerializeField] float mountForwardOffset = 0.6f;
-    [SerializeField] 
-
+    [SerializeField] float mountUpOffset = 1.2f;
+    [SerializeField] float mountSearchDownDistance = 3f;
+    [SerializeField] float mountDuration = 0.6f;
 
     // Objects to affect:
     Rigidbody rb;
@@ -67,15 +69,22 @@ public class PlayerMovement : MonoBehaviour
     Transform currentWall;
     Vector3 lastWallPosition;
     Quaternion lastWallRotation;
+    
     Vector3 wallUp;
     Vector3 wallRight;
     Vector3 delta;
+
+    Vector3 mountStartPosition;
+    Vector3 mountTargetPosition;
+    float mountStartTime;
+    float currentMountDuration = mountDuration;
 
     enum MoveState
     {
         Grounded,
         Airborne,
-        Climbing
+        Climbing,
+        Mounting
     }
     MoveState currentState = MoveState.Grounded;
 
@@ -87,10 +96,16 @@ public class PlayerMovement : MonoBehaviour
             case MoveState.Grounded:
             // ничего
             break;
+
             case MoveState.Airborne:
             // ничего
             break;
+
             case MoveState.Climbing:
+            currentWall = null;
+            break;
+
+            case MoveState.Mounting:
             currentWall = null;
             break;
         }
@@ -107,6 +122,8 @@ public class PlayerMovement : MonoBehaviour
             case MoveState.Climbing:
             currentVelocity = Vector3.zero;
             rb.linearVelocity = Vector3.zero;
+            break;
+            case MoveState.Mounting:
             break;
         }
 
@@ -179,10 +196,16 @@ public class PlayerMovement : MonoBehaviour
                 ApplyWallDelta();
                 MoveOnWall();
                 SolveClimbRotation();
+                tryStartMount();
+                if (currentState != MoveState.Climbing) break; // tryStartMount может сменить состояние на Mounting, тогда не нужно проверять отрыв от стены
                 if(currentWall == null)
                     switchState(MoveState.Airborne);
                 if (isGrounded)
                     switchState(MoveState.Grounded);
+                break;
+            
+            case MoveState.Mounting:
+                updateMount();
                 break;
         }
         rb.linearVelocity = currentVelocity;
@@ -204,6 +227,9 @@ public class PlayerMovement : MonoBehaviour
             case MoveState.Climbing:
                 if (Keyboard.current.spaceKey.wasPressedThisFrame)
                     DetachFromWall();
+                break;
+            
+            case MoveState.Climbing:
                 break;
         }
     }
@@ -429,6 +455,39 @@ public class PlayerMovement : MonoBehaviour
         }
     }
 
+    void tryStartMount()
+    {
+        if (UpperFrontHit.collider != null) return;
+        else if (((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) == 0)
+        {
+            Vector3 searchOrigin = transform.position + Vector3.up * mountUpOffset + anim.transform.forward * mountForwardOffset;
+            if (Physics.Raycast(searchOrigin, Vector3.down, out landingHit, mountSearchDownDistance, groundLayer | climbableLayer))
+            {
+                mountStartPosition = transform.position;
+                mountTargetPosition = landingHit.point;
+                mountStartTime = Time.time;
+                currentMountDuration = mountDuration;
+                switchState(MoveState.Mounting);
+            }
+        }
+    }
+
+    void updateMount()
+    {
+        float t = (Time.time - mountStartTime) / currentMountDuration;
+        if (t >= 1f)
+        {
+            transform.position = mountTargetPosition;
+            currentVelocity = Vector3.zero;
+            switchState(MoveState.Grounded);
+            return;
+        }
+        else
+        {
+            transform.position = Vector3.Lerp(mountStartPosition, mountTargetPosition, t);
+        }
+    }
+
 
     // --------------------------------------
     //
@@ -480,6 +539,7 @@ public class PlayerMovement : MonoBehaviour
             $"VelY: {currentVelocity.y:F2}\n" +
             $"Upper: {UpperFrontObjectName}\n" +
             $"Lower: {LowerFrontObjectName}\n" +
+            $"State: {currentState}\n" +
             $"Parent: {(transform.parent ? transform.parent.name : "none")}";
     }
 }
