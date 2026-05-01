@@ -33,9 +33,12 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] float LowerRayHeightOffset = 0.25f;
 
     [Header("Climbing")]
-    [SerializeField] float autoStickVelocityThreshold = 2f;
-    [SerializeField] float wallOffset = 0.1f;
-    [SerializeField] float climbSpeed = 2f;
+    [SerializeField] float autoStickVelocityThreshold = 0.6f;
+    [SerializeField] float wallOffset = 2f;
+    [SerializeField] float climbSpeed = 4f;
+    [SerializeField] float mountForwardOffset = 0.6f;
+    [SerializeField] 
+
 
     // Objects to affect:
     Rigidbody rb;
@@ -409,7 +412,7 @@ public class PlayerMovement : MonoBehaviour
     void MoveOnWall()
     {
         wallUp = Vector3.ProjectOnPlane(Vector3.up, surfaceNormal).normalized;
-        wallRight = Vector3.Cross(wallUp, surfaceNormal).normalized;
+        wallRight = Vector3.Cross(surfaceNormal, wallUp).normalized;
         delta = (wallRight * moveInput.x + wallUp * moveInput.y) * climbSpeed * Time.fixedDeltaTime;
         transform.position += delta;
 
