@@ -163,6 +163,7 @@ public class PlayerMovement : MonoBehaviour
 
             case MoveState.Climbing:
                 ApplyWallDelta();
+                SolveClimbRotation();
                 if(currentWall == null)
                     switchState(MoveState.Airborne);
                 if (isGrounded)
@@ -281,6 +282,15 @@ public class PlayerMovement : MonoBehaviour
         currentVelocity.z = newHorizontal.z;
     }
 
+    void SolveClimbRotation()
+    {
+        if (currentWall == null) return;
+
+        Quaternion targetRotation = Quaternion.LookRotation(-surfaceNormal, Vector3.up);
+
+        transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, turnSpeed * Time.fixedDeltaTime);
+    }
+
     void ApplyGravity() // Applies gravity to the vertical velocity, with smoothing when grounded
                         // if Player isGrounded and falling, it will transition to a small downward velocity to keep the character grounded
     {
@@ -343,6 +353,7 @@ public class PlayerMovement : MonoBehaviour
     void AttachToWall(RaycastHit hit)
     {
         surfaceNormal = hit.normal;
+        transform.rotation = Quaternion.LookRotation(-surfaceNormal, Vector3.up); // Rotate the player to face away from the wall
         surfacePoint = hit.point;
         currentWall = hit.transform;
         
@@ -368,6 +379,7 @@ public class PlayerMovement : MonoBehaviour
 
         Vector3 positionDelta = currentWall.position - lastWallPosition;
         Quaternion rotationDelta = currentWall.rotation * Quaternion.Inverse(lastWallRotation);
+        transform.rotation = rotationDelta * transform.rotation;
 
         // Корректировка позиции при вращении стены
         Vector3 localOffset = transform.position - lastWallPosition;
