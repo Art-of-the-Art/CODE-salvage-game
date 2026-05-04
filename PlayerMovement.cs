@@ -34,7 +34,7 @@ public class PlayerMovement : MonoBehaviour
 
     [Header("Climbing")]
     [SerializeField] float autoStickVelocityThreshold = 0.6f;
-    [SerializeField] float wallOffset = 2f;
+    [SerializeField] float wallOffset = 0.6f;
     [SerializeField] float climbSpeed = 4f;
     // MOUNTING
     [SerializeField] float mountForwardOffset = 0.6f;
@@ -77,7 +77,7 @@ public class PlayerMovement : MonoBehaviour
     Vector3 mountStartPosition;
     Vector3 mountTargetPosition;
     float mountStartTime;
-    float currentMountDuration = mountDuration;
+    float currentMountDuration;
 
     enum MoveState
     {
@@ -229,7 +229,7 @@ public class PlayerMovement : MonoBehaviour
                     DetachFromWall();
                 break;
             
-            case MoveState.Climbing:
+            case MoveState.Mounting:
                 break;
         }
     }
@@ -458,10 +458,11 @@ public class PlayerMovement : MonoBehaviour
     void tryStartMount()
     {
         if (UpperFrontHit.collider != null) return;
-        else if (((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) == 0)
+        if(LowerFrontHit.collider == null) return;
+        if (((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) != 0)
         {
             Vector3 searchOrigin = transform.position + Vector3.up * mountUpOffset + anim.transform.forward * mountForwardOffset;
-            if (Physics.Raycast(searchOrigin, Vector3.down, out landingHit, mountSearchDownDistance, groundLayer | climbableLayer))
+            if (Physics.Raycast(searchOrigin, Vector3.down, out RaycastHit landingHit, mountSearchDownDistance, groundLayer | climbableLayer))
             {
                 mountStartPosition = transform.position;
                 mountTargetPosition = landingHit.point;
