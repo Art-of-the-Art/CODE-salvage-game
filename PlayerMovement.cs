@@ -1,546 +1,580 @@
-using UnityEngine;
-using UnityEngine.InputSystem;
-using TMPro;
+﻿using UnityEngine;
 
+[RequireComponent(typeof(Rigidbody))]
 public class PlayerMovement : MonoBehaviour
 {
-    // -------------------------
-    // Declarations
-    // -------------------------
+    const float MoveInputDeadZoneSqr = 0.01f;
+    const float DirectionDeadZoneSqr = 0.001f;
+    const float GroundStickVelocity = -1.5f;
+    const float MaxFallSpeed = -30f;
 
-    [Header("References and objects")]
+    [Header("References")]
     [SerializeField] Transform playerCamera;
-    [SerializeField] TMP_Text interfaceText;
+    [SerializeField] PlayerInputReader input;
+    [SerializeField] PlayerGroundProbe groundProbe;
+    [SerializeField] PlayerFrontDetector frontDetector;
+    [SerializeField] PlayerClimbMotor climbMotor;
+    [SerializeField] PlayerAnimationBridge animationBridge;
+    [SerializeField] PlayerDebugHud debugHud;
 
     [Header("Movement")]
-    [SerializeField] float moveSpeed = 15f;
+    [SerializeField] float walkSpeed = 3f;
+    [SerializeField] float runSpeed = 8f;
     [SerializeField] float acceleration = 8f;
     [SerializeField] float deceleration = 12f;
     [SerializeField] float turnSpeed = 1500f;
 
     [Header("Jump & Gravity")]
-    [SerializeField] float jumpHeight = 4f;
+    [SerializeField] float jumpHeight = 3f;
     [SerializeField] float gravity = -30f;
+    [SerializeField] float wallJumpAngleDegrees = 55f;
+    [SerializeField] float wallJumpForceMultiplier = 1.2f;
     [SerializeField] float groundSmoothing = 10f;
+    [SerializeField] float stationaryJumpTakeoffDelay = 0.37f;
+    [SerializeField] float stationaryJumpVisualDrop = 0.25f;
+    [SerializeField] float stationaryJumpVisualRecoverDuration = 0.18f;
 
-    [Header("Checks and detections")]
-    [SerializeField] LayerMask groundLayer;
-    [SerializeField] LayerMask detectionLayer;
-    [SerializeField] LayerMask climbableLayer;
-    [SerializeField] float groundCheckDistance = 1.2f;
-    [SerializeField] float detectionDistance = 1.2f;
-    [SerializeField] float UpperRayHeightOffset = 0.8f;
-    [SerializeField] float LowerRayHeightOffset = 0.25f;
-
-    [Header("Climbing")]
-    [SerializeField] float autoStickVelocityThreshold = 0.6f;
-    [SerializeField] float wallOffset = 0.6f;
-    [SerializeField] float climbSpeed = 4f;
-    // MOUNTING
-    [SerializeField] float mountForwardOffset = 0.6f;
-    [SerializeField] float mountUpOffset = 1.2f;
-    [SerializeField] float mountSearchDownDistance = 3f;
-    [SerializeField] float mountDuration = 0.6f;
-
-    // Objects to affect:
     Rigidbody rb;
-    Animator anim;
-
-    // INPUT:
     Vector2 moveInput;
-    bool jumpRequested;
-
-    // DIRECTION
     Vector3 targetMoveDirection;
-    Vector3 lastMoveDirection = Vector3.forward;
     Quaternion currentMoveRotation;
     Vector3 currentVelocity;
-
-    // Front detection
-    RaycastHit UpperFrontHit;
-    RaycastHit LowerFrontHit;
-    string UpperFrontObjectName = "None";
-    string LowerFrontObjectName = "None";
-    bool isGrounded;
-
-    // Surfaces and climbing
-    Vector3 surfaceNormal;
-    Vector3 surfacePoint;
-    Transform currentWall;
-    Vector3 lastWallPosition;
-    Quaternion lastWallRotation;
-    
-    Vector3 wallUp;
-    Vector3 wallRight;
-    Vector3 delta;
-
-    Vector3 mountStartPosition;
-    Vector3 mountTargetPosition;
-    float mountStartTime;
-    float currentMountDuration;
+    Vector3 lockedAirVelocity;
+    Vector3 pendingStationaryJumpGroundVelocity;
+    float stationaryJumpTimer;
+    float stationaryJumpVisualOffset;
+    bool hasLockedAirVelocity;
 
     enum MoveState
     {
         Grounded,
+        JumpPreparing,
         Airborne,
         Climbing,
         Mounting
     }
+
     MoveState currentState = MoveState.Grounded;
-
-    void switchState(MoveState newState)
-    {
-        // --- Выход из текущего состояния ---
-        switch (currentState)
-        {
-            case MoveState.Grounded:
-            // ничего
-            break;
-
-            case MoveState.Airborne:
-            // ничего
-            break;
-
-            case MoveState.Climbing:
-            currentWall = null;
-            break;
-
-            case MoveState.Mounting:
-            currentWall = null;
-            break;
-        }
-
-        // --- Вход в новое состояние ---
-        switch (newState)
-        {
-            case MoveState.Grounded:
-            // ничего
-            break;
-            case MoveState.Airborne:
-            // ничего
-            break;
-            case MoveState.Climbing:
-            currentVelocity = Vector3.zero;
-            rb.linearVelocity = Vector3.zero;
-            break;
-            case MoveState.Mounting:
-            break;
-        }
-
-        currentState = newState;
-    }
-
-    // --------------------------------------
-    //
-    // Awake, Update, FixedUpdate and Input
-    //
-    // --------------------------------------
 
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
-        anim = GetComponentInChildren<Animator>();
+        input = input != null ? input : GetComponent<PlayerInputReader>();
+        groundProbe = groundProbe != null ? groundProbe : GetComponent<PlayerGroundProbe>();
+        frontDetector = frontDetector != null ? frontDetector : GetComponent<PlayerFrontDetector>();
+        climbMotor = climbMotor != null ? climbMotor : GetComponent<PlayerClimbMotor>();
+        animationBridge = animationBridge != null ? animationBridge : GetComponent<PlayerAnimationBridge>();
+        debugHud = debugHud != null ? debugHud : GetComponent<PlayerDebugHud>();
 
         rb.useGravity = false;
         rb.freezeRotation = true;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
 
-        if (playerCamera == null)
+        if (playerCamera == null && Camera.main != null)
             playerCamera = Camera.main.transform;
 
         currentMoveRotation = Quaternion.LookRotation(transform.forward);
     }
 
-    void OnMove(InputValue value)
-    {
-        moveInput = value.Get<Vector2>();
-    }
-
     void Update()
     {
-        UpdateUI();
-        ReadInput();
-        SolveDirection();
-        SolveRotation();
+        moveInput = ReadMoveInput();
+
+        if (currentState == MoveState.Grounded)
+        {
+            if (playerCamera == null)
+            {
+                targetMoveDirection = Vector3.zero;
+            }
+            else
+            {
+                Vector3 camForward = playerCamera.forward;
+                Vector3 camRight = playerCamera.right;
+                camForward.y = 0f;
+                camRight.y = 0f;
+                camForward.Normalize();
+                camRight.Normalize();
+
+                targetMoveDirection = camForward * moveInput.y + camRight * moveInput.x;
+                if (HasDirection(targetMoveDirection))
+                    targetMoveDirection.Normalize();
+            }
+
+            if (HasDirection(targetMoveDirection))
+            {
+                Quaternion targetRotation = Quaternion.LookRotation(targetMoveDirection);
+                currentMoveRotation = Quaternion.RotateTowards(currentMoveRotation, targetRotation, turnSpeed * Time.deltaTime);
+            }
+        }
+
+        UpdateAnimationState();
+        UpdateDebugHud();
     }
 
     void FixedUpdate()
     {
-        CheckGround();
+        moveInput = ReadMoveInput();
+
+        if (groundProbe != null)
+        {
+            groundProbe.Probe();
+            groundProbe.ApplyGroundDelta(rb);
+        }
+
         currentVelocity = rb.linearVelocity;
-        anim.SetBool("isRunning", moveInput.sqrMagnitude > 0.01f);
 
-        switch(currentState)
+        if (frontDetector != null)
+            frontDetector.Probe(transform, GetForwardSource());
+
+        switch (currentState)
         {
             case MoveState.Grounded:
-                SolveVelocity();
-                ApplyGravity();
-                ApplyJump();
-                SolveModelRotation();
-                //if (moveInput.sqrMagnitude > 0.01f)
-                //    ApplyAutoStick();
-                if (!isGrounded)
-                    switchState(MoveState.Airborne);
+                UpdateGrounded();
+                break;
+
+            case MoveState.JumpPreparing:
+                UpdateJumpPreparing();
                 break;
 
             case MoveState.Airborne:
-                SolveVelocity();
-                ApplyGravity();
-                SolveModelRotation();
-                ApplyAutoStick();
-                if (isGrounded && currentVelocity.y <= 0)
-                    switchState(MoveState.Grounded);
+                UpdateAirborne();
                 break;
 
             case MoveState.Climbing:
-                ApplyWallDelta();
-                MoveOnWall();
-                SolveClimbRotation();
-                tryStartMount();
-                if (currentState != MoveState.Climbing) break; // tryStartMount может сменить состояние на Mounting, тогда не нужно проверять отрыв от стены
-                if(currentWall == null)
-                    switchState(MoveState.Airborne);
-                if (isGrounded)
-                    switchState(MoveState.Grounded);
+                UpdateClimbing();
                 break;
-            
+
             case MoveState.Mounting:
-                updateMount();
+                UpdateMounting();
                 break;
         }
+
+        UpdateAnimationState();
         rb.linearVelocity = currentVelocity;
-        HandleFrontDetection();
+        UpdateDebugHud();
     }
 
-    void ReadInput() // Every update cheks pressed buttons
+    // Runs normal floor movement, jumping, and the transition into falling.
+    void UpdateGrounded()
     {
-        switch(currentState)
+        ClearAirVelocityLock();
+
+        Vector3 moveDirection = currentMoveRotation * Vector3.forward;
+        if (groundProbe != null && groundProbe.IsGrounded)
+        {
+            Vector3 projectedMove = Vector3.ProjectOnPlane(moveDirection, groundProbe.GroundNormal);
+            if (HasDirection(projectedMove))
+                moveDirection = projectedMove.normalized;
+        }
+
+        float speed = input != null && input.RunHeld ? runSpeed : walkSpeed;
+        Vector3 targetVelocity = moveDirection * speed * moveInput.magnitude;
+        Vector3 currentHorizontal = GetHorizontalVelocity(currentVelocity);
+        float lerpFactor = HasMoveInput(moveInput) ? acceleration : deceleration;
+        Vector3 newHorizontal = Vector3.Lerp(currentHorizontal, targetVelocity, lerpFactor * Time.fixedDeltaTime);
+        SetHorizontalVelocity(newHorizontal);
+        ApplyGravity();
+
+        if (input != null && input.ConsumeJump())
+        {
+            bool hadMoveInputAtJump = HasMoveInput(moveInput);
+            Vector3 inheritedGroundVelocity = groundProbe != null
+                ? Vector3.ProjectOnPlane(groundProbe.CurrentGroundVelocity, Vector3.up)
+                : Vector3.zero;
+
+            ClearModelVerticalOffset();
+            if (animationBridge != null)
+                animationBridge.PlayJump(hadMoveInputAtJump);
+
+            if (!hadMoveInputAtJump && stationaryJumpTakeoffDelay > 0f)
+            {
+                pendingStationaryJumpGroundVelocity = inheritedGroundVelocity;
+                stationaryJumpTimer = stationaryJumpTakeoffDelay;
+                SwitchState(MoveState.JumpPreparing);
+                return;
+            }
+
+            ExecuteJump(inheritedGroundVelocity);
+            SwitchState(MoveState.Airborne);
+            return;
+        }
+
+        if (animationBridge != null)
+            animationBridge.RotateTowardsVelocity(currentVelocity, turnSpeed);
+
+        if (!IsGrounded())
+        {
+            LockAirVelocityFromCurrent();
+            if (animationBridge != null)
+                animationBridge.PlayJump(HasMoveInput(moveInput));
+            SwitchState(MoveState.Airborne);
+        }
+    }
+
+    // Holds the player briefly for the standing jump anticipation frames.
+    void UpdateJumpPreparing()
+    {
+        if (input != null)
+            input.ConsumeJump();
+
+        if (!IsGrounded())
+        {
+            LockAirVelocityFromCurrent();
+            SwitchState(MoveState.Airborne);
+            return;
+        }
+
+        if (groundProbe != null)
+            pendingStationaryJumpGroundVelocity = Vector3.ProjectOnPlane(groundProbe.CurrentGroundVelocity, Vector3.up);
+
+        Vector3 newHorizontal = Vector3.Lerp(GetHorizontalVelocity(currentVelocity), Vector3.zero, deceleration * Time.fixedDeltaTime);
+        SetHorizontalVelocity(newHorizontal);
+        ApplyGravity();
+
+        float preparationProgress = stationaryJumpTakeoffDelay > 0f
+            ? 1f - Mathf.Clamp01(stationaryJumpTimer / stationaryJumpTakeoffDelay)
+            : 1f;
+        SetModelVerticalOffset(Mathf.Lerp(0f, -stationaryJumpVisualDrop, preparationProgress));
+
+        stationaryJumpTimer -= Time.fixedDeltaTime;
+        if (stationaryJumpTimer > 0f)
+            return;
+
+        SetModelVerticalOffset(-stationaryJumpVisualDrop);
+        ExecuteJump(pendingStationaryJumpGroundVelocity);
+        SwitchState(MoveState.Airborne);
+    }
+
+    // Keeps the jump-start horizontal velocity until landing or wall contact.
+    void UpdateAirborne()
+    {
+        if (input != null)
+            input.ConsumeJump();
+
+        MaintainLockedAirVelocity();
+        ApplyGravity();
+
+        if (stationaryJumpVisualOffset < -0.001f)
+        {
+            float recoverDuration = Mathf.Max(0.01f, stationaryJumpVisualRecoverDuration);
+            SetModelVerticalOffset(Mathf.MoveTowards(stationaryJumpVisualOffset, 0f, Time.fixedDeltaTime * stationaryJumpVisualDrop / recoverDuration));
+        }
+
+        if (animationBridge != null)
+            animationBridge.RotateTowardsVelocity(currentVelocity, turnSpeed);
+
+        if (climbMotor != null && frontDetector != null && climbMotor.TryAutoStick(frontDetector.LowerHit, currentVelocity, rb, transform))
+        {
+            SwitchState(MoveState.Climbing);
+            return;
+        }
+
+        if (IsGrounded() && currentVelocity.y <= 0f)
+            SwitchState(MoveState.Grounded);
+    }
+
+    // Handles wall movement, wall jump, ledge mounting, and falling from the wall.
+    void UpdateClimbing()
+    {
+        if (input != null && input.ConsumeJump())
+        {
+            StartWallJump();
+            return;
+        }
+
+        if (climbMotor == null)
+        {
+            SwitchState(MoveState.Airborne);
+            return;
+        }
+
+        climbMotor.ApplyWallDelta(transform);
+        climbMotor.SolveClimbRotation(transform, turnSpeed);
+
+        int landingMask = 0;
+        if (groundProbe != null)
+            landingMask |= groundProbe.GroundLayer.value;
+        landingMask |= climbMotor.ClimbableLayer.value;
+
+        if (TryStartLedgeMount(landingMask))
+            return;
+
+        bool stillOnWall = climbMotor.MoveOnWall(transform, moveInput);
+        if (!stillOnWall)
+        {
+            if (frontDetector != null)
+            {
+                frontDetector.Probe(transform, GetForwardSource());
+                if (TryStartLedgeMount(landingMask))
+                    return;
+            }
+
+            DetachAndEnterAirborne();
+            return;
+        }
+
+        if (!climbMotor.HasWall)
+        {
+            DetachAndEnterAirborne();
+            return;
+        }
+
+        if (IsGrounded())
+            SwitchState(MoveState.Grounded);
+    }
+
+    // Finishes the ledge mount and returns control to grounded movement.
+    void UpdateMounting()
+    {
+        if (input != null)
+            input.ConsumeJump();
+
+        Vector3 velocityOverride = Vector3.zero;
+        if (climbMotor == null || climbMotor.UpdateMount(transform, out velocityOverride))
+        {
+            currentVelocity = velocityOverride;
+            SwitchState(MoveState.Grounded);
+        }
+    }
+
+    // Pushes the player away from the climbed wall and into the air.
+    void StartWallJump()
+    {
+        Vector3 surfaceNormal = climbMotor != null ? climbMotor.SurfaceNormal : Vector3.zero;
+        Vector3 awayFromWall = Vector3.ProjectOnPlane(surfaceNormal, Vector3.up);
+        if (!HasDirection(awayFromWall))
+            awayFromWall = HasDirection(surfaceNormal) ? surfaceNormal : -transform.forward;
+        awayFromWall.Normalize();
+
+        float jumpSpeed = Mathf.Sqrt(jumpHeight * -2f * gravity) * wallJumpForceMultiplier;
+        float wallJumpAngleRadians = wallJumpAngleDegrees * Mathf.Deg2Rad;
+        Vector3 jumpDirection = awayFromWall * Mathf.Cos(wallJumpAngleRadians) + Vector3.up * Mathf.Sin(wallJumpAngleRadians);
+        currentVelocity = jumpDirection * jumpSpeed;
+
+        if (groundProbe != null)
+            groundProbe.ClearGround();
+
+        ClearModelVerticalOffset();
+        if (animationBridge != null)
+            animationBridge.PlayJump(true);
+
+        if (climbMotor != null)
+            climbMotor.DetachFromWall();
+
+        ClearAirVelocityLock();
+        LockAirVelocityFromCurrent();
+        SwitchState(MoveState.Airborne);
+    }
+
+    // Applies jump speed and inherits horizontal velocity from moving ground.
+    void ExecuteJump(Vector3 inheritedGroundVelocity)
+    {
+        currentVelocity.x += inheritedGroundVelocity.x;
+        currentVelocity.z += inheritedGroundVelocity.z;
+        currentVelocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
+
+        if (groundProbe != null)
+            groundProbe.ClearGround();
+
+        LockAirVelocityFromCurrent();
+    }
+
+    // Changes the high-level movement state and applies the needed entry cleanup.
+    void SwitchState(MoveState newState)
+    {
+        if (currentState == newState)
+            return;
+
+        if (currentState == MoveState.Climbing && climbMotor != null)
+            climbMotor.DetachFromWall();
+
+        currentState = newState;
+
+        switch (currentState)
         {
             case MoveState.Grounded:
-                if (Keyboard.current.spaceKey.wasPressedThisFrame)
-                    jumpRequested = true;
+                ClearAirVelocityLock();
+                ClearModelVerticalOffset();
+                break;
+
+            case MoveState.JumpPreparing:
+                ClearAirVelocityLock();
+                ClearModelVerticalOffset();
                 break;
 
             case MoveState.Airborne:
+                if (!hasLockedAirVelocity)
+                    LockAirVelocityFromCurrent();
                 break;
 
             case MoveState.Climbing:
-                if (Keyboard.current.spaceKey.wasPressedThisFrame)
-                    DetachFromWall();
+                ClearAirVelocityLock();
+                ClearModelVerticalOffset();
+                currentVelocity = Vector3.zero;
+                rb.linearVelocity = Vector3.zero;
+                if (groundProbe != null)
+                    groundProbe.ClearGround();
                 break;
-            
+
             case MoveState.Mounting:
+                ClearAirVelocityLock();
+                ClearModelVerticalOffset();
                 break;
         }
     }
 
-    // --------------------------------------
-    //
-    // Gameplay Functions
-    //
-    // --------------------------------------
-
-    void SolveDirection()
+    // Sends movement facts to the animation bridge.
+    void UpdateAnimationState()
     {
-        Vector3 camForward = playerCamera.forward;
-        Vector3 camRight = playerCamera.right;
+        if (animationBridge == null)
+            return;
 
-        camForward.y = 0;
-        camRight.y = 0;
+        bool moving = HasMoveInput(moveInput);
+        bool climbingAnimation = currentState == MoveState.Climbing;
+        bool climbingMovement = climbingAnimation && moving;
+        bool groundedAnimation = currentState == MoveState.Grounded;
+        bool runningAnimation = groundedAnimation && moving && input != null && input.RunHeld;
+        bool walkingAnimation = groundedAnimation && moving && !runningAnimation;
 
-        camForward.Normalize();
-        camRight.Normalize();
-
-        targetMoveDirection =
-            camForward * moveInput.y +
-            camRight * moveInput.x;
-
-        if (targetMoveDirection.sqrMagnitude > 0.001f)
-            targetMoveDirection.Normalize();
+        animationBridge.SetMovementState(groundedAnimation, currentVelocity.y, walkingAnimation, runningAnimation, climbingAnimation, climbingMovement);
     }
 
-    void SolveRotation() // Smoothly rotates the character towards the target move direction
+    // Shows the current movement and animation state in the debug HUD.
+    void UpdateDebugHud()
     {
-        if (targetMoveDirection.sqrMagnitude < 0.001f)
-            return; // No significant input, keep current rotation
+        if (debugHud == null)
+            return;
 
-        Quaternion targetRotation = Quaternion.LookRotation(targetMoveDirection);
-
-        currentMoveRotation = 
-            Quaternion.RotateTowards(
-                currentMoveRotation,
-                targetRotation,
-                turnSpeed * Time.deltaTime
-            );
-
-        // lastMoveDirection = currentMoveRotation * Vector3.forward; - убрал чтобы поворачивать игрока в сторону движения
+        debugHud.UpdateDebug(
+            IsGrounded(),
+            currentVelocity.y,
+            frontDetector != null ? frontDetector.UpperObjectName : "None",
+            frontDetector != null ? frontDetector.LowerObjectName : "None",
+            currentState.ToString(),
+            groundProbe != null ? groundProbe.CurrentGround : null,
+            groundProbe != null ? groundProbe.CurrentGroundVelocity : Vector3.zero,
+            groundProbe != null ? groundProbe.GroundNormal : Vector3.up,
+            transform.parent,
+            animationBridge != null ? animationBridge.GetDebugInfo() : "Anim: no bridge"
+        );
     }
 
-    void SolveModelRotation()
+    // ---------------------------------------------------------------------
+    // Service methods
+    // ---------------------------------------------------------------------
+
+    // Reads movement input safely when the input component is missing.
+    Vector2 ReadMoveInput()
     {
-        Vector3 horizontalVelocity = new Vector3(currentVelocity.x, 0, currentVelocity.z);
-        if ((horizontalVelocity.sqrMagnitude) >=0.1f)
-        {
-            Quaternion targetRotation = Quaternion.LookRotation(new Vector3(currentVelocity.x, 0, currentVelocity.z));
-            anim.transform.rotation = Quaternion.RotateTowards(anim.transform.rotation, targetRotation, turnSpeed * Time.fixedDeltaTime);
-            lastMoveDirection = targetRotation * Vector3.forward;
-        };
+        return input != null ? input.MoveInput : Vector2.zero;
     }
 
-    void SolveVelocity() // Calculates and updates velocity based on the current direction and speed
+    // Checks whether the input is strong enough to count as movement.
+    static bool HasMoveInput(Vector2 inputVector)
     {
-        Vector3 moveDir = currentMoveRotation * Vector3.forward;
-
-        Vector3 targetVelocity = moveDir * moveSpeed * moveInput.magnitude;
-
-        Vector3 currentHorizontal = new Vector3(currentVelocity.x, 0, currentVelocity.z);
-
-        float lerpFactor =
-            moveInput.sqrMagnitude > 0.01f
-            ? acceleration
-            : deceleration;
-
-        Vector3 newHorizontal =
-            Vector3.Lerp(
-                currentHorizontal,
-                targetVelocity,
-                lerpFactor * Time.fixedDeltaTime
-            );
-
-        currentVelocity.x = newHorizontal.x;
-        currentVelocity.z = newHorizontal.z;
+        return inputVector.sqrMagnitude > MoveInputDeadZoneSqr;
     }
 
-    void SolveClimbRotation()
+    // Checks whether a direction is strong enough to be useful.
+    static bool HasDirection(Vector3 direction)
     {
-        if (currentWall == null) return;
-
-        Quaternion targetRotation = Quaternion.LookRotation(-surfaceNormal, Vector3.up);
-
-        transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, turnSpeed * Time.fixedDeltaTime);
+        return direction.sqrMagnitude > DirectionDeadZoneSqr;
     }
 
-    void ApplyGravity() // Applies gravity to the vertical velocity, with smoothing when grounded
-                        // if Player isGrounded and falling, it will transition to a small downward velocity to keep the character grounded
+    // Returns only the sideways part of a velocity.
+    static Vector3 GetHorizontalVelocity(Vector3 velocity)
     {
-        if (isGrounded && currentVelocity.y <= 0)
-        {
-            currentVelocity.y =
-                Mathf.Lerp(
-                    currentVelocity.y,
-                    -1.5f,
-                    groundSmoothing * Time.fixedDeltaTime
-                );
-        }
+        return new Vector3(velocity.x, 0f, velocity.z);
+    }
+
+    // Replaces only the sideways part of the current velocity.
+    void SetHorizontalVelocity(Vector3 horizontalVelocity)
+    {
+        currentVelocity.x = horizontalVelocity.x;
+        currentVelocity.z = horizontalVelocity.z;
+    }
+
+    // Applies grounded stickiness or falling gravity to the current velocity.
+    void ApplyGravity()
+    {
+        if (IsGrounded() && currentVelocity.y <= 0f)
+            currentVelocity.y = Mathf.Lerp(currentVelocity.y, GroundStickVelocity, groundSmoothing * Time.fixedDeltaTime);
         else
-        {
             currentVelocity.y += gravity * Time.fixedDeltaTime;
-        }
 
-        currentVelocity.y = Mathf.Max(currentVelocity.y, -30f);
+        currentVelocity.y = Mathf.Max(currentVelocity.y, MaxFallSpeed);
     }
 
-    void ApplyJump()    // If jump button is pressed, calculates the initial jump velocity needed to reach 
-                        // ...the desired jump height and applies it to the vertical velocity
+    // Returns whether the ground probe currently sees valid ground.
+    bool IsGrounded()
     {
-        if (!jumpRequested) return;
-
-        currentVelocity.y =
-            Mathf.Sqrt(jumpHeight * -2f * gravity);
-
-        jumpRequested = false;
-        isGrounded = false;
+        return groundProbe != null && groundProbe.IsGrounded;
     }
 
-    void ApplyAutoStick() // If the player is close to the ground and moving downwards, apply a small downward velocity to keep them grounded
+    // Keeps the model offset field and the animation bridge in sync.
+    void SetModelVerticalOffset(float offset)
     {
-        if (LowerFrontHit.collider == null)
-            return;
-        else if (LowerFrontHit.collider != null 
-            && ((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) != 0
-            && Vector3.Angle(LowerFrontHit.normal, Vector3.up) > 60f
-            && Vector3.Dot(currentVelocity, -LowerFrontHit.normal) >= autoStickVelocityThreshold
-            )
-            AttachToWall(LowerFrontHit);
+        stationaryJumpVisualOffset = offset;
+        if (animationBridge != null)
+            animationBridge.SetModelVerticalOffset(stationaryJumpVisualOffset);
     }
 
-    void CheckGround() // Raycasts downward to check if the character is grounded, update isGrounded accordingly
+    // Resets the temporary visual crouch offset.
+    void ClearModelVerticalOffset()
     {
-        Vector3 rayOrigin = transform.position + Vector3.up * 0.5f;
-        float rayLength = 1.0f;
-        RaycastHit hit;
-        bool hitSomething = Physics.Raycast(
-            rayOrigin,
-            Vector3.down,
-            out hit,
-            rayLength,
-            groundLayer
-        );
-
-        isGrounded = hitSomething;
-
-        Debug.DrawRay(
-            rayOrigin,
-            Vector3.down * rayLength,
-            isGrounded ? Color.green : Color.red
-        );
-
-        if (hitSomething)
-            Debug.Log($"HIT: {hit.collider.name}, distance: {hit.distance:F2}");
-        else
-            Debug.Log($"MISS! rayOrigin.y = {rayOrigin.y:F2}, playerPos.y = {transform.position.y:F2}");
+        SetModelVerticalOffset(0f);
     }
 
-    void AttachToWall(RaycastHit hit)
+    // Chooses the visual forward direction when the animated model exists.
+    Transform GetForwardSource()
     {
-        surfaceNormal = hit.normal;
-        transform.rotation = Quaternion.LookRotation(-surfaceNormal, Vector3.up); // Rotate the player to face away from the wall
-        surfacePoint = hit.point;
-        currentWall = hit.transform;
-        
-        lastWallPosition = currentWall.position;
-        lastWallRotation = currentWall.rotation;
-
-        currentVelocity = Vector3.zero;
-        rb.linearVelocity = Vector3.zero;
-
-        transform.position = surfacePoint + surfaceNormal * wallOffset; // Adjust the offset as needed
-        switchState(MoveState.Climbing);
+        return animationBridge != null ? animationBridge.ModelTransform : transform;
     }
 
-    void DetachFromWall()
+    // Tries to begin ledge mounting and switches state when it succeeds.
+    bool TryStartLedgeMount(int landingMask)
     {
-        currentWall = null;
-        switchState(MoveState.Airborne);
+        if (frontDetector == null || climbMotor == null)
+            return false;
+
+        if (!climbMotor.TryStartMount(transform, GetForwardSource(), frontDetector.UpperHit, frontDetector.LowerHit, landingMask))
+            return false;
+
+        SwitchState(MoveState.Mounting);
+        return true;
     }
 
-    void ApplyWallDelta()
+    // Leaves the wall and continues with airborne movement.
+    void DetachAndEnterAirborne()
     {
-        if (currentWall == null) return;
+        if (climbMotor != null)
+            climbMotor.DetachFromWall();
 
-        Vector3 positionDelta = currentWall.position - lastWallPosition;
-        Quaternion rotationDelta = currentWall.rotation * Quaternion.Inverse(lastWallRotation);
-        transform.rotation = rotationDelta * transform.rotation;
-
-        // Корректировка позиции при вращении стены
-        Vector3 localOffset = transform.position - lastWallPosition;
-        Vector3 rotatedOffset = rotationDelta * localOffset;
-        positionDelta += (rotatedOffset - localOffset);
-
-        transform.position += positionDelta;
-        surfaceNormal = rotationDelta * surfaceNormal;
-
-        lastWallPosition = currentWall.position;
-        lastWallRotation = currentWall.rotation;
-        return;
+        LockAirVelocityFromCurrent();
+        SwitchState(MoveState.Airborne);
     }
 
-    void MoveOnWall()
+    // Stores the current sideways velocity for air control locking.
+    void LockAirVelocityFromCurrent()
     {
-        wallUp = Vector3.ProjectOnPlane(Vector3.up, surfaceNormal).normalized;
-        wallRight = Vector3.Cross(surfaceNormal, wallUp).normalized;
-        delta = (wallRight * moveInput.x + wallUp * moveInput.y) * climbSpeed * Time.fixedDeltaTime;
-        transform.position += delta;
-
-        if(Physics.Raycast(transform.position, -surfaceNormal, out RaycastHit hit, wallOffset * 1.5f, climbableLayer))
-        {
-            surfaceNormal = hit.normal;
-            surfacePoint = hit.point;
-            transform.position = hit.point + hit.normal * wallOffset;
-        }
-        else
-        {
-            DetachFromWall();
-            return;
-        }
+        lockedAirVelocity = GetHorizontalVelocity(currentVelocity);
+        hasLockedAirVelocity = true;
     }
 
-    void tryStartMount()
+    // Reapplies the stored sideways velocity while the player is airborne.
+    void MaintainLockedAirVelocity()
     {
-        if (UpperFrontHit.collider != null) return;
-        if(LowerFrontHit.collider == null) return;
-        if (((1 << LowerFrontHit.collider.gameObject.layer) & climbableLayer) != 0)
-        {
-            Vector3 searchOrigin = transform.position + Vector3.up * mountUpOffset + anim.transform.forward * mountForwardOffset;
-            if (Physics.Raycast(searchOrigin, Vector3.down, out RaycastHit landingHit, mountSearchDownDistance, groundLayer | climbableLayer))
-            {
-                mountStartPosition = transform.position;
-                mountTargetPosition = landingHit.point;
-                mountStartTime = Time.time;
-                currentMountDuration = mountDuration;
-                switchState(MoveState.Mounting);
-            }
-        }
+        if (!hasLockedAirVelocity)
+            LockAirVelocityFromCurrent();
+
+        SetHorizontalVelocity(lockedAirVelocity);
     }
 
-    void updateMount()
+    // Clears the stored airborne sideways velocity.
+    void ClearAirVelocityLock()
     {
-        float t = (Time.time - mountStartTime) / currentMountDuration;
-        if (t >= 1f)
-        {
-            transform.position = mountTargetPosition;
-            currentVelocity = Vector3.zero;
-            switchState(MoveState.Grounded);
-            return;
-        }
-        else
-        {
-            transform.position = Vector3.Lerp(mountStartPosition, mountTargetPosition, t);
-        }
-    }
-
-
-    // --------------------------------------
-    //
-    // Service functions non-gameplay related
-    //
-    // --------------------------------------
-    void HandleFrontDetection()
-    {
-        UpperFrontObjectName = "None";
-        LowerFrontObjectName = "None";
-
-        Vector3 upperOrigin =
-            transform.position +
-            Vector3.up * UpperRayHeightOffset;
-
-        Vector3 lowerOrigin =
-            transform.position +
-            Vector3.up * LowerRayHeightOffset;
-
-        if (Physics.Raycast(
-            upperOrigin,
-            anim.transform.forward,
-            out UpperFrontHit,
-            detectionDistance,
-            detectionLayer))
-        {
-            UpperFrontObjectName =
-                UpperFrontHit.collider.name;
-        }
-
-        if (Physics.Raycast(
-            lowerOrigin,
-            anim.transform.forward,
-            out LowerFrontHit,
-            detectionDistance,
-            detectionLayer))
-        {
-            LowerFrontObjectName =
-                LowerFrontHit.collider.name;
-        }
-    }
-
-    void UpdateUI() // Interface text update 
-    {
-        if (interfaceText == null) return;
-
-        interfaceText.text =
-            $"Grounded: {isGrounded}\n" +
-            $"VelY: {currentVelocity.y:F2}\n" +
-            $"Upper: {UpperFrontObjectName}\n" +
-            $"Lower: {LowerFrontObjectName}\n" +
-            $"State: {currentState}\n" +
-            $"Parent: {(transform.parent ? transform.parent.name : "none")}";
+        hasLockedAirVelocity = false;
+        lockedAirVelocity = Vector3.zero;
     }
 }
+
