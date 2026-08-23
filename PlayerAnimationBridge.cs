@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class PlayerAnimationBridge : MonoBehaviour
 {
@@ -91,14 +91,11 @@ public class PlayerAnimationBridge : MonoBehaviour
     Vector3 modelBaseLocalPosition;
     float modelVerticalOffset;
 
-    public Transform ModelTransform => visualRoot != null ? visualRoot : animator != null ? animator.transform : transform;
+    public Transform ModelTransform => visualRoot;
 
     void Awake()
     {
-        if (animator == null)
-            animator = GetComponentInChildren<Animator>();
-        if (visualRoot == null && animator != null)
-            visualRoot = animator.transform.parent != null && animator.transform.parent != transform ? animator.transform.parent : animator.transform;
+
 
         walkingParameterHash = Animator.StringToHash(walkingParameter);
         runningParameterHash = Animator.StringToHash(runningParameter);
@@ -118,8 +115,6 @@ public class PlayerAnimationBridge : MonoBehaviour
         fallStateHash = Animator.StringToHash(fallStateName);
         landStateHash = Animator.StringToHash(landStateName);
 
-        if (animator == null)
-            return;
 
         animator.applyRootMotion = false;
         hipsTransform = animator.GetBoneTransform(HumanBodyBones.Hips);
@@ -138,24 +133,18 @@ public class PlayerAnimationBridge : MonoBehaviour
 
         foreach (AnimatorControllerParameter parameter in animator.parameters)
         {
-            if (parameter.nameHash == walkingParameterHash)
-                hasWalkingParameter = true;
-            else if (parameter.nameHash == runningParameterHash)
-                hasRunningParameter = true;
-            else if (parameter.nameHash == climbingParameterHash)
-                hasClimbingParameter = true;
-            else if (parameter.nameHash == playbackSpeedParameterHash)
-                hasPlaybackSpeedParameter = true;
-            else if (parameter.nameHash == groundedParameterHash)
-                hasGroundedParameter = true;
-            else if (parameter.nameHash == verticalVelocityParameterHash)
-                hasVerticalVelocityParameter = true;
-            else if (parameter.nameHash == fallingParameterHash)
-                hasFallingParameter = true;
-            else if (parameter.nameHash == jumpTriggerParameterHash)
-                hasJumpTriggerParameter = true;
-            else if (parameter.nameHash == jumpInPlaceTriggerParameterHash)
-                hasJumpInPlaceTriggerParameter = true;
+            switch (parameter.nameHash)
+            {
+                case int hash when hash == walkingParameterHash: hasWalkingParameter = true; break;
+                case int hash when hash == runningParameterHash: hasRunningParameter = true; break;
+                case int hash when hash == climbingParameterHash: hasClimbingParameter = true; break;
+                case int hash when hash == playbackSpeedParameterHash: hasPlaybackSpeedParameter = true; break;
+                case int hash when hash == groundedParameterHash: hasGroundedParameter = true; break;
+                case int hash when hash == verticalVelocityParameterHash: hasVerticalVelocityParameter = true; break;
+                case int hash when hash == fallingParameterHash: hasFallingParameter = true; break;
+                case int hash when hash == jumpTriggerParameterHash: hasJumpTriggerParameter = true; break;
+                case int hash when hash == jumpInPlaceTriggerParameterHash: hasJumpInPlaceTriggerParameter = true; break;
+            }
         }
 
         SetBoolIfPresent(groundedParameterHash, hasGroundedParameter, true);
@@ -169,8 +158,6 @@ public class PlayerAnimationBridge : MonoBehaviour
 
     void Update()
     {
-        if (animator == null)
-            return;
 
         bool wantsLocomotion = desiredWalking || desiredRunning || desiredClimbing;
         bool currentAnimatorStateIsLocomotion = IsCurrentState(walkStateHash) || IsCurrentState(runStateHash) || IsCurrentState(climbStateHash);
@@ -224,8 +211,6 @@ public class PlayerAnimationBridge : MonoBehaviour
     // Applies the movement state that should be visible on the player model.
     public void SetMovementState(bool grounded, float yVelocity, bool walking, bool running, bool climbing, bool climbingMoving = true)
     {
-        if (animator == null)
-            return;
 
         bool wasGrounded = isGroundedAnimation;
         desiredClimbing = climbing;
@@ -279,8 +264,6 @@ public class PlayerAnimationBridge : MonoBehaviour
     // Plays either the moving jump or the standing jump animation branch.
     public void PlayJump(bool hasMoveInput)
     {
-        if (animator == null)
-            return;
 
         jumpStartedAt = Time.time;
         landingAnimationActive = false;
@@ -324,8 +307,6 @@ public class PlayerAnimationBridge : MonoBehaviour
     // Builds a compact description of the current animator state for the debug HUD.
     public string GetDebugInfo()
     {
-        if (animator == null)
-            return "Anim: none";
 
         AnimatorStateInfo state = animator.GetCurrentAnimatorStateInfo(0);
         string stateName = ResolveStateName(state.shortNameHash);
@@ -360,8 +341,6 @@ public class PlayerAnimationBridge : MonoBehaviour
     // Moves the visual model up or down without moving the physics body.
     public void SetModelVerticalOffset(float offset)
     {
-        if (animator == null)
-            return;
 
         modelVerticalOffset = Mathf.Clamp(offset, -maxDownwardModelOffset, maxDownwardModelOffset);
         Vector3 position = modelBaseLocalPosition;
@@ -379,8 +358,6 @@ public class PlayerAnimationBridge : MonoBehaviour
     public void RotateTowardsVelocity(Vector3 currentVelocity, float turnSpeed)
     {
         Transform model = ModelTransform;
-        if (model == null)
-            return;
 
         Vector3 horizontalVelocity = new Vector3(currentVelocity.x, 0f, currentVelocity.z);
         if (horizontalVelocity.sqrMagnitude < RotateVelocityThresholdSqr)
@@ -505,26 +482,19 @@ public class PlayerAnimationBridge : MonoBehaviour
     }
 
     // Converts a cached animator state hash into a readable state name.
-    string ResolveStateName(int stateHash)
+    string ResolveStateName(int stateHash) => stateHash switch
     {
-        if (stateHash == idleStateHash)
-            return idleStateName;
-        if (stateHash == walkStateHash)
-            return walkStateName;
-        if (stateHash == runStateHash)
-            return runStateName;
-        if (stateHash == climbStateHash)
-            return climbStateName;
-        if (stateHash == jumpStateHash)
-            return jumpStateName;
-        if (stateHash == jumpInPlaceStateHash)
-            return jumpInPlaceStateName;
-        if (stateHash == fallStateHash)
-            return fallStateName;
-        if (stateHash == landStateHash)
-            return landStateName;
-        return stateHash.ToString();
-    }
+        _ when stateHash == idleStateHash        => idleStateName,
+        _ when stateHash == walkStateHash        => walkStateName,
+        _ when stateHash == runStateHash         => runStateName,
+        _ when stateHash == climbStateHash       => climbStateName,
+        _ when stateHash == jumpStateHash        => jumpStateName,
+        _ when stateHash == jumpInPlaceStateHash => jumpInPlaceStateName,
+        _ when stateHash == fallStateHash        => fallStateName,
+        _ when stateHash == landStateHash        => landStateName,
+        _                                        => stateHash.ToString() // Дефолтный вариант (вместо else)
+    };
+
 
     // Formats a vector without adding noisy labels.
     static string FormatVector(Vector3 value)

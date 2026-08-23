@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class PlayerGroundProbe : MonoBehaviour
 {
@@ -66,7 +66,7 @@ public class PlayerGroundProbe : MonoBehaviour
     {
         currentGroundVelocity = Vector3.zero;
 
-        if (!IsGrounded || currentGround == null || currentGround == transform || rb == null)
+        if (!IsGrounded || currentGround == null || currentGround == transform)
             return;
 
         Vector3 totalDelta = GetSurfaceDelta(currentGround, lastGroundPosition, lastGroundRotation, rb.position);

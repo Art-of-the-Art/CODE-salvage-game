@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class PlayerFrontDetector : MonoBehaviour
 {
@@ -21,10 +21,7 @@ public class PlayerFrontDetector : MonoBehaviour
         UpperHit = default;
         LowerHit = default;
 
-        if (originTransform == null)
-            return;
-
-        Vector3 forward = forwardTransform != null ? forwardTransform.forward : originTransform.forward;
+        Vector3 forward = forwardTransform.forward;
         Vector3 upperOrigin = originTransform.position + Vector3.up * upperRayHeightOffset;
         Vector3 lowerOrigin = originTransform.position + Vector3.up * lowerRayHeightOffset;
 

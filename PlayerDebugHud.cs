@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using TMPro;
 using UnityEngine;
 
@@ -21,8 +21,6 @@ public class PlayerDebugHud : MonoBehaviour
         Transform parent,
         string animationDebug)
     {
-        if (interfaceText == null)
-            return;
 
         builder.Clear();
         builder.Append("Grounded: ").Append(isGrounded).Append('\n');

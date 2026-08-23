@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.InputSystem;
 
 public class ThirdPersonCamera : MonoBehaviour
@@ -34,14 +34,14 @@ public class ThirdPersonCamera : MonoBehaviour
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
 
-        yaw = player != null ? player.eulerAngles.y : transform.eulerAngles.y;
+        yaw = player.eulerAngles.y;
         pitch = 0f;
         currentDistance = defaultDistance;
     }
 
     void LateUpdate()
     {
-        if (player == null || Mouse.current == null)
+        if (Mouse.current == null)
             return;
 
         Vector2 mouseDelta = Mouse.current.delta.ReadValue();
@@ -51,6 +51,7 @@ public class ThirdPersonCamera : MonoBehaviour
 
         Vector3 pivotPoint = player.position + Vector3.up * heightOffset;
         Quaternion cameraRotation = Quaternion.Euler(pitch, yaw, 0f);
+        
         Vector3 cameraForward = cameraRotation * Vector3.forward;
         Vector3 desiredPosition = pivotPoint - cameraForward * defaultDistance;
         Vector3 castDirection = (desiredPosition - pivotPoint).normalized;

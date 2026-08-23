@@ -27,7 +27,7 @@ public class RobotMovement : MonoBehaviour
     {
         if (!hasTarget)
         {
-            Vector3 currentPosition = GetBodyPosition();
+            Vector3 currentPosition = rb.position;
 
             for (int i = 0; i < targetAttempts; i++)
             {
@@ -53,7 +53,7 @@ public class RobotMovement : MonoBehaviour
 
                 moveDirection.Normalize();
                 targetRotation = Quaternion.LookRotation(moveDirection, Vector3.up);
-                turning = Quaternion.Angle(GetBodyRotation(), targetRotation) > turnDoneAngle;
+                turning = Quaternion.Angle(rb.rotation, targetRotation) > turnDoneAngle;
                 hasTarget = true;
                 break;
             }
@@ -64,8 +64,8 @@ public class RobotMovement : MonoBehaviour
 
         if (turning)
         {
-            Quaternion nextRotation = Quaternion.RotateTowards(GetBodyRotation(), targetRotation, rotationSpeed * Time.fixedDeltaTime);
-            SetBodyRotation(nextRotation);
+            Quaternion nextRotation = Quaternion.RotateTowards(rb.rotation, targetRotation, rotationSpeed * Time.fixedDeltaTime);
+            rb.MoveRotation(nextRotation);
             turning = Quaternion.Angle(nextRotation, targetRotation) > turnDoneAngle;
             return;
         }
@@ -77,7 +77,7 @@ public class RobotMovement : MonoBehaviour
         }
 
         float step = Mathf.Min(moveSpeed * Time.fixedDeltaTime, distanceLeft);
-        SetBodyPosition(GetBodyPosition() + moveDirection * step);
+        rb.MovePosition(rb.position + moveDirection * step);
         distanceLeft -= step;
     }
 
@@ -85,33 +85,4 @@ public class RobotMovement : MonoBehaviour
     // Service methods
     // ---------------------------------------------------------------------
 
-    // Returns the physical position when possible, otherwise the object position.
-    Vector3 GetBodyPosition()
-    {
-        return rb != null ? rb.position : transform.position;
-    }
-
-    // Moves the physical body when possible, otherwise moves the object directly.
-    void SetBodyPosition(Vector3 position)
-    {
-        if (rb != null)
-            rb.MovePosition(position);
-        else
-            transform.position = position;
-    }
-
-    // Returns the physical rotation when possible, otherwise the object rotation.
-    Quaternion GetBodyRotation()
-    {
-        return rb != null ? rb.rotation : transform.rotation;
-    }
-
-    // Rotates the physical body when possible, otherwise rotates the object directly.
-    void SetBodyRotation(Quaternion rotation)
-    {
-        if (rb != null)
-            rb.MoveRotation(rotation);
-        else
-            transform.rotation = rotation;
-    }
 }

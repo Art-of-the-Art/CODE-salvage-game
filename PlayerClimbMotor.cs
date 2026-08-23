@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class PlayerClimbMotor : MonoBehaviour
 {
@@ -52,8 +52,6 @@ public class PlayerClimbMotor : MonoBehaviour
     // Places the player on the wall and stops their previous physics movement.
     public void AttachToWall(RaycastHit hit, Rigidbody rb, Transform body)
     {
-        if (body == null)
-            return;
 
         surfaceNormal = hit.normal;
         surfacePoint = hit.point;
@@ -65,11 +63,8 @@ public class PlayerClimbMotor : MonoBehaviour
         body.rotation = Quaternion.LookRotation(-surfaceNormal, Vector3.up);
         body.position = surfacePoint + surfaceNormal * wallOffset;
 
-        if (rb != null)
-        {
-            rb.linearVelocity = Vector3.zero;
-            rb.angularVelocity = Vector3.zero;
-        }
+        rb.linearVelocity = Vector3.zero;
+        rb.angularVelocity = Vector3.zero;
     }
 
     // Stops treating the current wall as an active climb surface.
@@ -81,7 +76,7 @@ public class PlayerClimbMotor : MonoBehaviour
     // Carries the player along when the climbed wall moves or rotates.
     public void ApplyWallDelta(Transform body)
     {
-        if (currentWall == null || body == null)
+        if (currentWall == null)
             return;
 
         Quaternion rotationDelta = currentWall.rotation * Quaternion.Inverse(lastWallRotation);
@@ -98,7 +93,7 @@ public class PlayerClimbMotor : MonoBehaviour
     // Moves the player across the wall while keeping them snapped to the surface.
     public bool MoveOnWall(Transform body, Vector2 moveInput)
     {
-        if (currentWall == null || body == null)
+        if (currentWall == null)
             return false;
 
         Vector3 wallUp = GetWallUp();
@@ -124,7 +119,7 @@ public class PlayerClimbMotor : MonoBehaviour
     // Turns the player so they keep facing the climbed surface.
     public void SolveClimbRotation(Transform body, float turnSpeed)
     {
-        if (currentWall == null || body == null)
+        if (currentWall == null)
             return;
 
         Quaternion targetRotation = Quaternion.LookRotation(-surfaceNormal, Vector3.up);
@@ -134,7 +129,7 @@ public class PlayerClimbMotor : MonoBehaviour
     // Starts pulling the player onto the top of a ledge when a landing point is available.
     public bool TryStartMount(Transform body, Transform forwardTransform, RaycastHit upperHit, RaycastHit lowerHit, int landingMask)
     {
-        if (body == null || upperHit.collider != null)
+        if (upperHit.collider != null)
             return false;
 
         if (!IsClimbable(lowerHit.collider) && currentWall == null && !IsWithinLedgeGrace())
@@ -178,8 +173,6 @@ public class PlayerClimbMotor : MonoBehaviour
     {
         velocityOverride = Vector3.zero;
 
-        if (body == null)
-            return true;
 
         float t = (Time.time - mountStartTime) / currentMountDuration;
         if (t >= 1f)
@@ -212,7 +205,7 @@ public class PlayerClimbMotor : MonoBehaviour
     Vector3 GetMountForward(Transform body, Transform forwardTransform)
     {
         Vector3 fallback = surfaceNormal.sqrMagnitude > 0.001f ? -surfaceNormal.normalized : body.forward;
-        Vector3 forward = forwardTransform != null ? forwardTransform.forward : fallback;
+        Vector3 forward = forwardTransform.forward;
         forward = Vector3.ProjectOnPlane(forward, Vector3.up);
 
         if (forward.sqrMagnitude < 0.001f)
