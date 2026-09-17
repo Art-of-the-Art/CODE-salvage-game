@@ -51,16 +51,18 @@ public class RobotMovement : MonoBehaviour
                 // стреляем в эту точку лучом с высоты 1000
 
                 if (!Physics.Raycast(ray, out RaycastHit hit, 2000f, terrainLayer, QueryTriggerInteraction.Ignore))
-                    continue;
+                    continue; // если луч не попал в землю, то переходим к следующей попытке поиска точки
 
-                Collider collider = hit.collider;
+                Collider collider = hit.collider; // Забираем коллайдер обьекта в который мы попали лучом
                 if (collider.GetComponent<Terrain>() == null && collider.name != terrainName && collider.transform.root.name != terrainName)
-                    continue;
+                    continue; // Если это не Terrain, то продолжаем искать новую точку.
 
-                moveDirection = hit.point - currentPosition;
-                moveDirection.y = 0f;
-                distanceLeft = moveDirection.magnitude;
-                if (distanceLeft <= arrivalDistance)
+                moveDirection = hit.point - currentPosition; // позиция куда мы идем = позиция точки на земле - текущая позиция робота
+                moveDirection.y = 0f; // обнуляем высоту
+                distanceLeft = moveDirection.magnitude; // расстояние до точки = длина вектора в направлении движения
+                if (distanceLeft <= arrivalDistance) // если расстояние до точки меньше arrivalDistance, то продолжаем искать новую точку
+                                                     // ГАВНО ГАВНО ГАВНО
+                                                     // НАДО ПЕРЕПИСАТЬ ГАВНО
                     continue;
 
                 moveDirection.Normalize();
