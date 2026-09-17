@@ -1,3 +1,5 @@
+// Автор прочитал и понимает что тут происходит.
+
 using UnityEngine;
 
 [RequireComponent(typeof(Rigidbody))]
@@ -26,18 +28,27 @@ public class RobotMovement : MonoBehaviour
 
     void FixedUpdate()
     {
+        /*
+
+        */
         if (!hasTarget)
         {
             Vector3 currentPosition = rb.position;
 
-            for (int i = 0; i < targetAttempts; i++)
+            // Eсли у робота нет цели, то он ищет случайную точку на земле в пределах targetDistance и пытается туда пойти.
+            for (int i = 0; i < targetAttempts; i++) 
             {
                 Vector2 random = Random.insideUnitCircle.normalized;
                 if (random == Vector2.zero)
-                    random = Vector2.right;
-
+                    random = Vector2.forward;
                 Vector3 point = currentPosition + new Vector3(random.x, 0f, random.y) * targetDistance;
+                // берем рандомную точку в пределах targetDistance от текущей позиции робота
+                    // 1. делаем random: рандомную точку (Random.insideUnitCircle) 
+                    // 2. на границе круга (за это отвечает .normalized)
+                    // 3. если вдруг случайно получилось (0,0), то продолжаем ехать вперед (Vector2.forward)
+                    // 4. выбрав направление, ставим целевую точку в этом направлении на расстоянии targetDistance от текущей позиции робота
                 Ray ray = new Ray(new Vector3(point.x, 1000f, point.z), Vector3.down);
+                // стреляем в эту точку лучом с высоты 1000
 
                 if (!Physics.Raycast(ray, out RaycastHit hit, 2000f, terrainLayer, QueryTriggerInteraction.Ignore))
                     continue;

@@ -52,4 +52,3 @@ RobotMovement получил RequireComponent для Rigidbody и исключе
 
 Рабочий Git находится в `Assets/CODE-salvage-game`, а не в корне Unity-проекта. До правок `RobotMovement.cs` уже был изменён. Тесты и этот отчёт находятся внутри вложенного репозитория. Коммит не создавался.
 
-Резервная копия исходников, Editor, базы знаний, Main.unity и PlayerAnimator.controller: `AuditBackups/2026-09-17-before-code-review` относительно корня проекта. Восстанавливать следует только нужные исходные файлы; не заменять целиком содержимое проекта или Git-метаданные.
