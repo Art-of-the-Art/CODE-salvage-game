@@ -1,5 +1,6 @@
-﻿using UnityEngine;
+using UnityEngine;
 
+[RequireComponent(typeof(Rigidbody))]
 public class RobotMovement : MonoBehaviour
 {
     [SerializeField] float moveSpeed = 7f;
@@ -38,7 +39,7 @@ public class RobotMovement : MonoBehaviour
                 Vector3 point = currentPosition + new Vector3(random.x, 0f, random.y) * targetDistance;
                 Ray ray = new Ray(new Vector3(point.x, 1000f, point.z), Vector3.down);
 
-                if (!Physics.Raycast(ray, out RaycastHit hit, 2000f, terrainLayer))
+                if (!Physics.Raycast(ray, out RaycastHit hit, 2000f, terrainLayer, QueryTriggerInteraction.Ignore))
                     continue;
 
                 Collider collider = hit.collider;
@@ -57,10 +58,12 @@ public class RobotMovement : MonoBehaviour
                 hasTarget = true;
                 break;
             }
+
+            return;
         }
 
-        if (!hasTarget)
-            return;
+        // if (!hasTarget)
+        //     return;
 
         if (turning)
         {

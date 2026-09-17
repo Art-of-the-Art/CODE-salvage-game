@@ -8,6 +8,7 @@ public class PlayerAnimationBridge : MonoBehaviour
     [Header("Animator")]
     [SerializeField] Transform visualRoot;
     [SerializeField] Animator animator;
+    [SerializeField] RuntimeAnimatorController animationController;
     [SerializeField] string walkingParameter = "isWalking";
     [SerializeField] string runningParameter = "isRunning";
     [SerializeField] string climbingParameter = "isClimbing";
@@ -97,6 +98,18 @@ public class PlayerAnimationBridge : MonoBehaviour
     {
 
 
+        // Resolve the Animator from the shared visual prefab, including after replacing its model.
+        if (visualRoot != null)
+            animator = visualRoot.GetComponentInChildren<Animator>(true);
+        if (visualRoot == null || animator == null)
+        {
+            Debug.LogError("PlayerAnimationBridge needs a visual root containing the model's Animator.", this);
+            enabled = false;
+            return;
+        }
+        if (animationController != null)
+            animator.runtimeAnimatorController = animationController;
+
         walkingParameterHash = Animator.StringToHash(walkingParameter);
         runningParameterHash = Animator.StringToHash(runningParameter);
         climbingParameterHash = Animator.StringToHash(climbingParameter);
@@ -117,7 +130,7 @@ public class PlayerAnimationBridge : MonoBehaviour
 
 
         animator.applyRootMotion = false;
-        hipsTransform = animator.GetBoneTransform(HumanBodyBones.Hips);
+        hipsTransform = animator.isHuman ? animator.GetBoneTransform(HumanBodyBones.Hips) : null;
         if (hipsTransform == null)
             hipsTransform = animator.transform.Find("mixamorig:Hips");
         modelBaseLocalPosition = ModelTransform.localPosition;
@@ -167,7 +180,7 @@ public class PlayerAnimationBridge : MonoBehaviour
             locomotionRamp01 = 0f;
             SetFloatIfPresent(playbackSpeedParameterHash, hasPlaybackSpeedParameter, 1f);
 
-            if (currentAnimatorStateIsLocomotion && isGroundedAnimation && useDirectCrossFade && hasIdleState && !landingAnimationActive)
+            if (currentAnimatorStateIsLocomotion && isGroundedAnimation && useDirectCrossFade && hasIdleState && !landingAnimationActive && !IsCurrentOrNextState(idleStateHash))
                 animator.CrossFadeInFixedTime(idleStateHash, idleCrossFadeDuration);
         }
         else
@@ -202,8 +215,7 @@ public class PlayerAnimationBridge : MonoBehaviour
 
         if (useDirectCrossFade && hasFallState && !isGroundedAnimation && !desiredClimbing && isFallingAnimation && Time.time - jumpStartedAt >= minimumJumpStateTime)
         {
-            AnimatorStateInfo state = animator.GetCurrentAnimatorStateInfo(0);
-            if (!state.IsName(fallStateName))
+            if (!IsCurrentOrNextState(fallStateHash))
                 animator.CrossFadeInFixedTime(fallStateHash, fallCrossFadeDuration);
         }
     }
@@ -354,6 +366,21 @@ public class PlayerAnimationBridge : MonoBehaviour
         SetModelVerticalOffset(0f);
     }
 
+    // Walking rotates the visual child independently of the physics body.
+    // A wall attachment must replace that old world heading, not add the parent's turn to it.
+    public void FaceClimbSurface(Vector3 surfaceNormal)
+    {
+        if (surfaceNormal.sqrMagnitude < 0.001f)
+            return;
+        Vector3 forward = -surfaceNormal.normalized;
+        Vector3 up = Vector3.ProjectOnPlane(Vector3.up, forward);
+        if (up.sqrMagnitude < 0.001f)
+            up = Vector3.ProjectOnPlane(transform.up, forward);
+        if (up.sqrMagnitude < 0.001f)
+            up = Vector3.ProjectOnPlane(Vector3.forward, forward);
+        ModelTransform.rotation = Quaternion.LookRotation(forward, up.normalized);
+    }
+
     // Turns the visual model toward the current movement direction.
     public void RotateTowardsVelocity(Vector3 currentVelocity, float turnSpeed)
     {
@@ -479,6 +506,14 @@ public class PlayerAnimationBridge : MonoBehaviour
     {
         AnimatorStateInfo state = animator.GetCurrentAnimatorStateInfo(0);
         return state.shortNameHash == stateHash;
+    }
+
+    // Do not restart a crossfade while its destination is already being blended in.
+    bool IsCurrentOrNextState(int stateHash)
+    {
+        if (animator.IsInTransition(0))
+            return animator.GetNextAnimatorStateInfo(0).shortNameHash == stateHash;
+        return IsCurrentState(stateHash);
     }
 
     // Converts a cached animator state hash into a readable state name.

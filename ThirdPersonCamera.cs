@@ -1,3 +1,4 @@
+// Автор прочитал и понимает что тут происходит.
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -31,6 +32,13 @@ public class ThirdPersonCamera : MonoBehaviour
 
     void Start()
     {
+        if (player == null)
+        {
+            Debug.LogError("ThirdPersonCamera needs a player Transform.", this);
+            enabled = false;
+            return;
+        }
+
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
 
@@ -41,10 +49,10 @@ public class ThirdPersonCamera : MonoBehaviour
 
     void LateUpdate()
     {
-        if (Mouse.current == null)
+        if (player == null)
             return;
 
-        Vector2 mouseDelta = Mouse.current.delta.ReadValue();
+        Vector2 mouseDelta = Mouse.current != null ? Mouse.current.delta.ReadValue() : Vector2.zero;
         yaw += mouseDelta.x * sensitivity;
         pitch -= mouseDelta.y * sensitivity;
         pitch = Mathf.Clamp(pitch, minPitch, maxPitch);
@@ -57,7 +65,7 @@ public class ThirdPersonCamera : MonoBehaviour
         Vector3 castDirection = (desiredPosition - pivotPoint).normalized;
 
         float targetDistance = defaultDistance;
-        if (Physics.SphereCast(pivotPoint, collisionRadius, castDirection, out RaycastHit hit, defaultDistance, collisionMask))
+        if (Physics.SphereCast(pivotPoint, collisionRadius, castDirection, out RaycastHit hit, defaultDistance, collisionMask, QueryTriggerInteraction.Ignore))
             targetDistance = Mathf.Clamp(hit.distance - collisionRadius, collisionRadius, defaultDistance);
 
         if (targetDistance < currentDistance)

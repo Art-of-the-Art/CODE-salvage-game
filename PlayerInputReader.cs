@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
+[DefaultExecutionOrder(-100)]
 [RequireComponent(typeof(PlayerInput))]
 public class PlayerInputReader : MonoBehaviour
 {
@@ -25,7 +26,6 @@ public class PlayerInputReader : MonoBehaviour
     void Awake()
     {
         playerInput = GetComponent<PlayerInput>();
-        BindActions();
     }
 
     void OnEnable()
@@ -33,30 +33,59 @@ public class PlayerInputReader : MonoBehaviour
         BindActions();
     }
 
+    void Start()
+    {
+        // PlayerInput may create its per-player action copy in its own OnEnable.
+        BindActions();
+    }
+
+    void OnDisable()
+    {
+        ClearInput();
+    }
+
+    void OnApplicationFocus(bool hasFocus)
+    {
+        if (!hasFocus)
+            ClearInput();
+    }
+
     void Update()
     {
-        moveInput = moveAction.ReadValue<Vector2>();
+        if (playerInput == null || !playerInput.isActiveAndEnabled || !playerInput.inputIsActive)
+        {
+            ClearInput();
+            return;
+        }
 
-        if (jumpAction.WasPressedThisFrame())
+        if (moveAction != null)
+            moveInput = Vector2.ClampMagnitude(moveAction.ReadValue<Vector2>(), 1f);
+        if (jumpAction != null && jumpAction.WasPressedThisFrame())
             jumpQueued = true;
-
-        runHeld = runAction.IsPressed();
+        if (runAction != null)
+            runHeld = runAction.IsPressed();
     }
 
-    // Receives move input from Unity events when an action asset is not bound.
+    // Preserve message-based adapters for configurations without named actions.
+    // Bound actions are polled only once: SendMessages plus polling must not queue two jumps.
     public void OnMove(InputValue value)
     {
-        moveInput = value.Get<Vector2>();
+        if (isActiveAndEnabled && moveAction == null)
+            moveInput = Vector2.ClampMagnitude(value.Get<Vector2>(), 1f);
     }
 
-    // Receives jump input from Unity events and stores it for the movement step.
     public void OnJump(InputValue value)
     {
-        if (value.isPressed)
+        if (isActiveAndEnabled && jumpAction == null && value.isPressed)
             jumpQueued = true;
     }
 
-    // Gives the queued jump to movement code once, then clears it.
+    public void OnSprint(InputValue value)
+    {
+        if (isActiveAndEnabled && runAction == null)
+            runHeld = value.isPressed;
+    }
+
     public bool ConsumeJump()
     {
         bool wasQueued = jumpQueued;
@@ -64,18 +93,20 @@ public class PlayerInputReader : MonoBehaviour
         return wasQueued;
     }
 
-    // ---------------------------------------------------------------------
-    // Service methods
-    // ---------------------------------------------------------------------
-
-    // Finds the named input actions used by the player.
-    void BindActions()
+    void ClearInput()
     {
-
-        moveAction = playerInput.actions.FindAction(moveActionName, false);
-        jumpAction = playerInput.actions.FindAction(jumpActionName, false);
-        runAction = playerInput.actions.FindAction(runActionName, false);
+        moveInput = Vector2.zero;
+        runHeld = false;
+        jumpQueued = false;
     }
 
-
+    void BindActions()
+    {
+        if (playerInput == null)
+            playerInput = GetComponent<PlayerInput>();
+        var actions = playerInput != null ? playerInput.actions : null;
+        moveAction = actions != null ? actions.FindAction(moveActionName, false) : null;
+        jumpAction = actions != null ? actions.FindAction(jumpActionName, false) : null;
+        runAction = actions != null ? actions.FindAction(runActionName, false) : null;
+    }
 }

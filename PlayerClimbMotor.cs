@@ -24,6 +24,8 @@ public class PlayerClimbMotor : MonoBehaviour
     Vector3 surfaceNormal;
     Vector3 surfacePoint;
     float lastWallContactTime;
+    Transform mountSurface;
+    Collider mountCollider;
     Vector3 mountStartPosition;
     Vector3 mountTargetPosition;
     float mountStartTime;
@@ -31,6 +33,7 @@ public class PlayerClimbMotor : MonoBehaviour
 
     public LayerMask ClimbableLayer => climbableLayer;
     public bool HasWall => currentWall != null;
+    public bool HasMountSurface => mountSurface != null && mountCollider != null && mountCollider.enabled && mountCollider.gameObject.activeInHierarchy;
     public Vector3 SurfaceNormal => surfaceNormal;
 
     // Attaches the player to a steep climbable wall when they hit it with enough speed.
@@ -98,6 +101,7 @@ public class PlayerClimbMotor : MonoBehaviour
 
         Vector3 wallUp = GetWallUp();
         Vector3 wallRight = Vector3.Cross(surfaceNormal, wallUp).normalized;
+        moveInput = Vector2.ClampMagnitude(moveInput, 1f);
         Vector3 delta = (wallRight * moveInput.x + wallUp * moveInput.y) * climbSpeed * Time.fixedDeltaTime;
         body.position += delta;
 
@@ -127,7 +131,7 @@ public class PlayerClimbMotor : MonoBehaviour
     }
 
     // Starts pulling the player onto the top of a ledge when a landing point is available.
-    public bool TryStartMount(Transform body, Transform forwardTransform, RaycastHit upperHit, RaycastHit lowerHit, int landingMask)
+    public bool TryStartMount(Transform body, Transform forwardTransform, RaycastHit upperHit, RaycastHit lowerHit, int landingMask, float maxLandingAngle = 55f)
     {
         if (upperHit.collider != null)
             return false;
@@ -151,7 +155,8 @@ public class PlayerClimbMotor : MonoBehaviour
 
         for (int i = 0; i < searchOrigins.Length; i++)
         {
-            if (Physics.Raycast(searchOrigins[i], Vector3.down, out landingHit, searchDistance, landingMask, QueryTriggerInteraction.Ignore))
+            if (Physics.Raycast(searchOrigins[i], Vector3.down, out landingHit, searchDistance, landingMask, QueryTriggerInteraction.Ignore)
+                && Vector3.Angle(landingHit.normal, Vector3.up) <= maxLandingAngle)
             {
                 hasLanding = true;
                 break;
@@ -161,8 +166,11 @@ public class PlayerClimbMotor : MonoBehaviour
         if (!hasLanding)
             return false;
 
-        mountStartPosition = body.position;
-        mountTargetPosition = landingHit.point;
+        // Store both ends relative to the contacted collider, including moving robot parts.
+        mountSurface = landingHit.collider.transform;
+        mountCollider = landingHit.collider;
+        mountStartPosition = mountSurface.InverseTransformPoint(body.position);
+        mountTargetPosition = mountSurface.InverseTransformPoint(landingHit.point);
         mountStartTime = Time.time;
         currentMountDuration = Mathf.Max(0.01f, mountDuration);
         return true;
@@ -174,14 +182,19 @@ public class PlayerClimbMotor : MonoBehaviour
         velocityOverride = Vector3.zero;
 
 
+        if (!HasMountSurface)
+            return false;
+
+        Vector3 start = mountSurface.TransformPoint(mountStartPosition);
+        Vector3 target = mountSurface.TransformPoint(mountTargetPosition);
         float t = (Time.time - mountStartTime) / currentMountDuration;
         if (t >= 1f)
         {
-            body.position = mountTargetPosition;
+            body.position = target;
             return true;
         }
 
-        body.position = Vector3.Lerp(mountStartPosition, mountTargetPosition, t);
+        body.position = Vector3.Lerp(start, target, t);
         return false;
     }
 

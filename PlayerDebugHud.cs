@@ -8,6 +8,8 @@ public class PlayerDebugHud : MonoBehaviour
 
     readonly StringBuilder builder = new StringBuilder(256);
 
+    public bool IsVisible => isActiveAndEnabled && interfaceText != null && interfaceText.isActiveAndEnabled;
+
     // Rebuilds the player debug text from the latest movement data.
     public void UpdateDebug(
         bool isGrounded,
@@ -21,6 +23,9 @@ public class PlayerDebugHud : MonoBehaviour
         Transform parent,
         string animationDebug)
     {
+
+        if (!IsVisible)
+            return;
 
         builder.Clear();
         builder.Append("Grounded: ").Append(isGrounded).Append('\n');

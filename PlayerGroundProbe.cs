@@ -16,6 +16,7 @@ public class PlayerGroundProbe : MonoBehaviour
     Vector3 currentGroundVelocity;
 
     public LayerMask GroundLayer => groundLayer;
+    public float MaxGroundAngle => maxGroundAngle;
     public bool IsGrounded { get; private set; }
     public RaycastHit GroundHit { get; private set; }
     public Vector3 GroundNormal { get; private set; } = Vector3.up;
@@ -61,8 +62,8 @@ public class PlayerGroundProbe : MonoBehaviour
             Debug.Log($"GROUND MISS: rayOrigin.y = {rayOrigin.y:F2}, playerPos.y = {transform.position.y:F2}");
     }
 
-    // Moves the player together with the ground currently under their feet.
-    public void ApplyGroundDelta(Rigidbody rb)
+    // Always sample surface motion; carry the body only while movement owns ground contact.
+    public void ApplyGroundDelta(Rigidbody rb, bool carryPlayer = true)
     {
         currentGroundVelocity = Vector3.zero;
 
@@ -71,7 +72,7 @@ public class PlayerGroundProbe : MonoBehaviour
 
         Vector3 totalDelta = GetSurfaceDelta(currentGround, lastGroundPosition, lastGroundRotation, rb.position);
 
-        if (totalDelta.sqrMagnitude > 0f)
+        if (carryPlayer && totalDelta.sqrMagnitude > 0f)
             rb.position += totalDelta;
 
         currentGroundVelocity = totalDelta / Time.fixedDeltaTime;
@@ -83,7 +84,9 @@ public class PlayerGroundProbe : MonoBehaviour
     public void ClearGround()
     {
         IsGrounded = false;
+        GroundHit = default;
         GroundNormal = Vector3.up;
+        currentGroundVelocity = Vector3.zero;
         SetCurrentGround(null);
     }
 
