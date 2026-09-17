@@ -1,3 +1,5 @@
+// Автор прочитал и понимает что тут происходит.
+
 using System.Text;
 using TMPro;
 using UnityEngine;
