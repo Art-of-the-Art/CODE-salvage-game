@@ -429,6 +429,9 @@ public class PlayerMovement : MonoBehaviour
     // Sends movement facts to the animation bridge.
     void UpdateAnimationState()
     {
+        /* Берем скорость игрока минус groundProbe.CurrentGroundVelocity. Проецируем результат на плоск. groundProbe.GroundNormal и берем длину вектора */
+        Vector3 groundRelativeVelocity = Vector3.ProjectOnPlane(currentVelocity - groundProbe.CurrentGroundVelocity, groundProbe.GroundNormal);
+        float locomotionSpeed = groundRelativeVelocity.magnitude;
 
         bool moving = HasMoveInput(moveInput);
         bool climbingAnimation = currentState == MoveState.Climbing;
@@ -437,7 +440,7 @@ public class PlayerMovement : MonoBehaviour
         bool runningAnimation = groundedAnimation && moving && input.RunHeld;
         bool walkingAnimation = groundedAnimation && moving && !runningAnimation;
 
-        animationBridge.SetMovementState(groundedAnimation, currentVelocity.y, walkingAnimation, runningAnimation, climbingAnimation, climbingMovement);
+        animationBridge.SetMovementState(groundedAnimation, currentVelocity.y, locomotionSpeed, walkingAnimation, runningAnimation, climbingAnimation, climbingMovement);
     }
 
     // Shows the current movement and animation state in the debug HUD.

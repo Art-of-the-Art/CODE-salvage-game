@@ -1,4 +1,10 @@
-/*
+/* 
+    Про контекст разработчика
+    Разработчик НЕ хочет изучать как работают анимации в Unity. 
+    Разработчика устроит полностью "вайбкодить" этот скрипт 
+*/
+
+/* ЧТО ДЕЛАЕТ СКРИПТ
  * Связывает состояние движения игрока с анимацией его общей 3D-модели.
  * Unity вызывает Awake() при инициализации: скрипт находит Animator внутри visualRoot,
  * назначает общий контроллер и запоминает доступные состояния и параметры анимации.
@@ -12,7 +18,6 @@ using UnityEngine;
 
 public class PlayerAnimationBridge : MonoBehaviour
 {
-    const float LocomotionKeepThreshold = 0.001f;
     const float RotateVelocityThresholdSqr = 0.1f;
 
     [Header("Animator")]
@@ -28,6 +33,8 @@ public class PlayerAnimationBridge : MonoBehaviour
     [SerializeField] string fallingParameter = "isFalling";
     [SerializeField] string jumpTriggerParameter = "jumpRequested";
     [SerializeField] string jumpInPlaceTriggerParameter = "jumpInPlaceRequested";
+    [SerializeField] string locomotionStateName = "Locomotion";
+    [SerializeField] string locomotionSpeedParameter = "locomotionSpeed";
     [SerializeField] string idleStateName = "Idle";
     [SerializeField] string walkStateName = "Walk";
     [SerializeField] string runStateName = "Run";
@@ -37,14 +44,12 @@ public class PlayerAnimationBridge : MonoBehaviour
     [SerializeField] string fallStateName = "Fall";
     [SerializeField] string landStateName = "Land";
     [SerializeField] float locomotionCrossFadeDuration = 0.08f;
-    [SerializeField] float idleCrossFadeDuration = 0.08f;
+    [SerializeField] float locomotionSpeedDampTime = 0.12f;
     [SerializeField] float jumpCrossFadeDuration = 0.06f;
     [SerializeField] float fallCrossFadeDuration = 0.12f;
     [SerializeField] float landingCrossFadeDuration = 0.1f;
     [SerializeField] float landingExitDelay = 0.12f;
-    [SerializeField] float locomotionRampDuration = 0.1f;
-    [SerializeField] float maxWalkPlaybackSpeed = 1.1f;
-    [SerializeField] float maxRunPlaybackSpeed = 1f;
+    [SerializeField] float climbPlaybackRampDuration = 0.1f;
     [SerializeField] float maxClimbPlaybackSpeed = 0.8f;
     [SerializeField] float maxDownwardModelOffset = 0.35f;
     [SerializeField] float fallingVelocityThreshold = -1f;
@@ -55,12 +60,10 @@ public class PlayerAnimationBridge : MonoBehaviour
     bool desiredRunning;
     bool desiredClimbing;
     bool desiredClimbMoving;
-    bool lastRequestedWalk;
-    bool lastRequestedRun;
-    bool lastRequestedClimb;
     bool isGroundedAnimation = true;
     bool isFallingAnimation;
     bool landingAnimationActive;
+    bool hasLocomotionState;
     bool hasIdleState;
     bool hasWalkState;
     bool hasRunState;
@@ -72,6 +75,7 @@ public class PlayerAnimationBridge : MonoBehaviour
     bool hasWalkingParameter;
     bool hasRunningParameter;
     bool hasClimbingParameter;
+    bool hasLocomotionSpeedParameter;
     bool hasPlaybackSpeedParameter;
     bool hasGroundedParameter;
     bool hasVerticalVelocityParameter;
@@ -81,6 +85,7 @@ public class PlayerAnimationBridge : MonoBehaviour
     float locomotionRamp01;
     float jumpStartedAt;
     float landingStartedAt;
+    int locomotionStateHash;
     int idleStateHash;
     int walkStateHash;
     int runStateHash;
@@ -98,11 +103,15 @@ public class PlayerAnimationBridge : MonoBehaviour
     int fallingParameterHash;
     int jumpTriggerParameterHash;
     int jumpInPlaceTriggerParameterHash;
+    int locomotionSpeedParameterHash;
     Transform hipsTransform;
     Vector3 modelBaseLocalPosition;
     float modelVerticalOffset;
+    float desiredLocomotionSpeed;
 
     public Transform ModelTransform => visualRoot;
+    public bool ShouldUseGroundFootIk => isGroundedAnimation && !desiredClimbing;
+    public float LocomotionSpeed => desiredLocomotionSpeed;
 
     void Awake()
     {
@@ -129,6 +138,7 @@ public class PlayerAnimationBridge : MonoBehaviour
         fallingParameterHash = Animator.StringToHash(fallingParameter);
         jumpTriggerParameterHash = Animator.StringToHash(jumpTriggerParameter);
         jumpInPlaceTriggerParameterHash = Animator.StringToHash(jumpInPlaceTriggerParameter);
+        locomotionStateHash = Animator.StringToHash(locomotionStateName);
         idleStateHash = Animator.StringToHash(idleStateName);
         walkStateHash = Animator.StringToHash(walkStateName);
         runStateHash = Animator.StringToHash(runStateName);
@@ -137,6 +147,7 @@ public class PlayerAnimationBridge : MonoBehaviour
         jumpInPlaceStateHash = Animator.StringToHash(jumpInPlaceStateName);
         fallStateHash = Animator.StringToHash(fallStateName);
         landStateHash = Animator.StringToHash(landStateName);
+        locomotionSpeedParameterHash = Animator.StringToHash(locomotionSpeedParameter);
 
 
         animator.applyRootMotion = false;
@@ -145,6 +156,7 @@ public class PlayerAnimationBridge : MonoBehaviour
             hipsTransform = animator.transform.Find("mixamorig:Hips");
         modelBaseLocalPosition = ModelTransform.localPosition;
 
+        hasLocomotionState = animator.HasState(0, locomotionStateHash);
         hasIdleState = animator.HasState(0, idleStateHash);
         hasWalkState = animator.HasState(0, walkStateHash);
         hasRunState = animator.HasState(0, runStateHash);
@@ -167,6 +179,7 @@ public class PlayerAnimationBridge : MonoBehaviour
                 case int hash when hash == fallingParameterHash: hasFallingParameter = true; break;
                 case int hash when hash == jumpTriggerParameterHash: hasJumpTriggerParameter = true; break;
                 case int hash when hash == jumpInPlaceTriggerParameterHash: hasJumpInPlaceTriggerParameter = true; break;
+                case int hash when hash == locomotionSpeedParameterHash: hasLocomotionSpeedParameter = true; break;
             }
         }
 
@@ -176,46 +189,14 @@ public class PlayerAnimationBridge : MonoBehaviour
         SetBoolIfPresent(climbingParameterHash, hasClimbingParameter, false);
         SetFloatIfPresent(playbackSpeedParameterHash, hasPlaybackSpeedParameter, 1f);
         SetFloatIfPresent(verticalVelocityParameterHash, hasVerticalVelocityParameter, 0f);
+        SetFloatIfPresent(locomotionSpeedParameterHash, hasLocomotionSpeedParameter, 0f);
         SetBoolIfPresent(fallingParameterHash, hasFallingParameter, false);
     }
 
     void Update()
     {
-
-        bool wantsLocomotion = desiredWalking || desiredRunning || desiredClimbing;
-        bool currentAnimatorStateIsLocomotion = IsCurrentState(walkStateHash) || IsCurrentState(runStateHash) || IsCurrentState(climbStateHash);
-
-        if (!wantsLocomotion)
-        {
-            locomotionRamp01 = 0f;
-            SetFloatIfPresent(playbackSpeedParameterHash, hasPlaybackSpeedParameter, 1f);
-
-            if (currentAnimatorStateIsLocomotion && isGroundedAnimation && useDirectCrossFade && hasIdleState && !landingAnimationActive && !IsCurrentOrNextState(idleStateHash))
-                animator.CrossFadeInFixedTime(idleStateHash, idleCrossFadeDuration);
-        }
-        else
-        {
-            float rampStep = locomotionRampDuration > 0f ? Time.deltaTime / locomotionRampDuration : 1f;
-            locomotionRamp01 = Mathf.MoveTowards(locomotionRamp01, 1f, rampStep);
-
-            float maxPlaybackSpeed = maxWalkPlaybackSpeed;
-            if (desiredClimbing)
-                maxPlaybackSpeed = desiredClimbMoving ? maxClimbPlaybackSpeed : 0f;
-            else if (desiredRunning)
-                maxPlaybackSpeed = maxRunPlaybackSpeed;
-
-            float eased = locomotionRamp01 * locomotionRamp01 * (3f - 2f * locomotionRamp01);
-            float playbackSpeed = desiredClimbing && !desiredClimbMoving ? 0f : Mathf.Max(0.05f, eased * maxPlaybackSpeed);
-            SetFloatIfPresent(playbackSpeedParameterHash, hasPlaybackSpeedParameter, playbackSpeed);
-
-            if (lastRequestedWalk || lastRequestedRun || lastRequestedClimb)
-            {
-                bool keepWalking = desiredWalking || (locomotionRamp01 > LocomotionKeepThreshold && lastRequestedWalk);
-                bool keepRunning = desiredRunning || (locomotionRamp01 > LocomotionKeepThreshold && lastRequestedRun);
-                bool keepClimbing = desiredClimbing || (locomotionRamp01 > LocomotionKeepThreshold && lastRequestedClimb);
-                SetLocomotionBools(keepWalking, keepRunning, keepClimbing);
-            }
-        }
+        UpdateLocomotionSpeed();
+        UpdateClimbPlaybackSpeed();
 
         if (landingAnimationActive && Time.time - landingStartedAt >= landingExitDelay)
         {
@@ -231,7 +212,7 @@ public class PlayerAnimationBridge : MonoBehaviour
     }
 
     // Applies the movement state that should be visible on the player model.
-    public void SetMovementState(bool grounded, float yVelocity, bool walking, bool running, bool climbing, bool climbingMoving = true)
+    public void SetMovementState(bool grounded, float yVelocity, float locomotionSpeed, bool walking, bool running, bool climbing, bool climbingMoving = true)
     {
 
         bool wasGrounded = isGroundedAnimation;
@@ -241,11 +222,12 @@ public class PlayerAnimationBridge : MonoBehaviour
         desiredRunning = grounded && running && !climbing;
         isGroundedAnimation = grounded && !climbing;
         isFallingAnimation = !isGroundedAnimation && !climbing && yVelocity < fallingVelocityThreshold;
+        desiredLocomotionSpeed = isGroundedAnimation ? locomotionSpeed : 0f;
 
         SetBoolIfPresent(groundedParameterHash, hasGroundedParameter, isGroundedAnimation);
         SetFloatIfPresent(verticalVelocityParameterHash, hasVerticalVelocityParameter, yVelocity);
         SetBoolIfPresent(fallingParameterHash, hasFallingParameter, isFallingAnimation);
-        SetLocomotionBools(desiredWalking || lastRequestedWalk, desiredRunning || lastRequestedRun, desiredClimbing || lastRequestedClimb);
+        SetLocomotionBools(desiredWalking, desiredRunning, desiredClimbing);
 
         if (climbing)
         {
@@ -263,9 +245,6 @@ public class PlayerAnimationBridge : MonoBehaviour
 
         if (!wasGrounded)
         {
-            lastRequestedWalk = desiredWalking;
-            lastRequestedRun = desiredRunning;
-            lastRequestedClimb = false;
             SetLocomotionBools(desiredWalking, desiredRunning, false);
 
             if (hasLandState && useDirectCrossFade)
@@ -408,16 +387,46 @@ public class PlayerAnimationBridge : MonoBehaviour
     // Service methods
     // ---------------------------------------------------------------------
 
-    // The flags describe our last request, not the Animator's evaluated blend state.
+    // The movement code supplies a target speed at the physics rate.
+    // Damping here lets the visible blend change smoothly at the render rate.
+    void UpdateLocomotionSpeed()
+    {
+        if (hasLocomotionSpeedParameter)
+            animator.SetFloat(locomotionSpeedParameterHash, desiredLocomotionSpeed,
+                locomotionSpeedDampTime, Time.deltaTime);
+    }
+
+    // Ground locomotion uses Blend Tree child speeds. This legacy parameter now
+    // controls only Climb, including the existing freeze when input is released.
+    void UpdateClimbPlaybackSpeed()
+    {
+        if (!desiredClimbing)
+        {
+            locomotionRamp01 = 0f;
+            SetFloatIfPresent(playbackSpeedParameterHash, hasPlaybackSpeedParameter, 1f);
+            return;
+        }
+
+        if (!desiredClimbMoving)
+        {
+            SetFloatIfPresent(playbackSpeedParameterHash, hasPlaybackSpeedParameter, 0f);
+            return;
+        }
+
+        float rampStep = climbPlaybackRampDuration > 0f
+            ? Time.deltaTime / climbPlaybackRampDuration : 1f;
+        locomotionRamp01 = Mathf.MoveTowards(locomotionRamp01, 1f, rampStep);
+        float eased = locomotionRamp01 * locomotionRamp01 * (3f - 2f * locomotionRamp01);
+        SetFloatIfPresent(playbackSpeedParameterHash, hasPlaybackSpeedParameter,
+            Mathf.Max(0.05f, eased * maxClimbPlaybackSpeed));
+    }
+
+    // Ground speed changes stay inside Locomotion; only a mode change needs CrossFade.
     void UpdateLocomotionCrossFade()
     {
         if (landingAnimationActive || !useDirectCrossFade)
             return;
-        bool changed = desiredWalking != lastRequestedWalk
-            || desiredRunning != lastRequestedRun || desiredClimbing != lastRequestedClimb;
-        if (changed)
-            CrossFadeToCurrentLocomotion(desiredWalking || desiredRunning || desiredClimbing
-                ? locomotionCrossFadeDuration : idleCrossFadeDuration);
+        CrossFadeToCurrentLocomotion(locomotionCrossFadeDuration);
     }
 
     // One selection path is shared by normal movement and landing completion.
@@ -428,6 +437,8 @@ public class PlayerAnimationBridge : MonoBehaviour
         int stateHash;
         if (desiredClimbing && hasClimbState)
             stateHash = climbStateHash;
+        else if (isGroundedAnimation && hasLocomotionState)
+            stateHash = locomotionStateHash;
         else if (desiredRunning && hasRunState)
             stateHash = runStateHash;
         else if (desiredWalking && hasWalkState)
@@ -437,23 +448,17 @@ public class PlayerAnimationBridge : MonoBehaviour
         else
             return;
 
-        lastRequestedClimb = stateHash == climbStateHash;
-        lastRequestedRun = stateHash == runStateHash;
-        lastRequestedWalk = stateHash == walkStateHash;
-        if (stateHash == idleStateHash)
-            ClearLocomotionState();
-        else
-            SetLocomotionBools(lastRequestedWalk, lastRequestedRun, lastRequestedClimb);
+        SetLocomotionBools(desiredWalking, desiredRunning, desiredClimbing);
+        if (IsCurrentOrNextState(stateHash))
+            return;
         animator.CrossFadeInFixedTime(stateHash, duration);
     }
 
     // Clears the stored walk, run, and climb animation flags.
     void ClearLocomotionState()
     {
-        lastRequestedWalk = false;
-        lastRequestedRun = false;
-        lastRequestedClimb = false;
         locomotionRamp01 = 0f;
+        desiredLocomotionSpeed = 0f;
         desiredClimbMoving = false;
         SetLocomotionBools(false, false, false);
     }
@@ -485,6 +490,7 @@ public class PlayerAnimationBridge : MonoBehaviour
     string ResolveStateName(int stateHash) => stateHash switch
     {
         _ when stateHash == idleStateHash        => idleStateName,
+        _ when stateHash == locomotionStateHash  => locomotionStateName,
         _ when stateHash == walkStateHash        => walkStateName,
         _ when stateHash == runStateHash         => runStateName,
         _ when stateHash == climbStateHash       => climbStateName,

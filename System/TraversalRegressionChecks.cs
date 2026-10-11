@@ -64,7 +64,8 @@ public static class TraversalRegressionChecks
         Check("Camera follows without a mouse", CameraWithoutMouse);
         Check("Camera inherits the supporting platform yaw", CameraInheritsSupportYaw);
         Check("Camera ignores the supporting robot in collision checks", CameraIgnoresSupportCollision);
-        Check("Walk-to-idle animation finishes its transition", IdleTransition);
+        Check("Locomotion stays active while its speed returns to idle", IdleTransition);
+        Check("Locomotion Blend Tree has the gameplay speed thresholds", LocomotionBlendTree);
         Check("All six clips animate one shared Humanoid rig", SharedRigAnimations);
         report.AppendLine("Failures: " + failures.Count);
         return report.ToString();
@@ -237,7 +238,9 @@ public static class TraversalRegressionChecks
         Set(reader, "jumpQueued", true);
         Set(reader, "moveInput", Vector2.one);
         Set(reader, "runHeld", true);
-        reader.SendMessage("OnDisable", SendMessageOptions.DontRequireReceiver);
+        // Invoke the lifecycle method directly. SendMessage on an editor-only temporary
+        // behaviour makes Unity log an internal ShouldRunBehaviour assertion.
+        Invoke(reader, "OnDisable");
         Require(!reader.ConsumeJump() && reader.MoveInput == Vector2.zero && !reader.RunHeld, "Input survives disable");
     }
 
@@ -418,17 +421,46 @@ public static class TraversalRegressionChecks
         var bridge = player.GetComponent<PlayerAnimationBridge>();
         var animator = (Animator)Get(bridge, "animator");
         animator.Rebind();
-        animator.Play("Walk", 0, 0f);
+        animator.Play("Locomotion", 0, 0f);
         animator.Update(0f);
-        bridge.SetMovementState(true, 0f, true, false, false);
+        bridge.SetMovementState(true, 0f, 3f, true, false, false);
         animator.Update(0.1f);
-        bridge.SetMovementState(true, 0f, false, false, false);
+        bridge.SetMovementState(true, 0f, 0f, false, false, false);
         for (int i = 0; i < 30; i++)
         {
             Invoke(bridge, "Update");
             animator.Update(0.02f);
         }
-        Require(animator.GetCurrentAnimatorStateInfo(0).IsName("Idle") && !animator.IsInTransition(0), "Repeated crossfade prevents settling in Idle");
+        Require(animator.GetCurrentAnimatorStateInfo(0).IsName("Locomotion") && !animator.IsInTransition(0),
+            "Ground speed change left or restarted Locomotion");
+        Require(animator.GetFloat("locomotionSpeed") < 0.05f, "Locomotion speed did not settle near idle");
+    }
+
+    static void LocomotionBlendTree()
+    {
+        var controller = AssetDatabase.LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(
+            "Assets/PlayerAnimator.controller");
+        var states = controller.layers[0].stateMachine.states;
+        UnityEditor.Animations.BlendTree tree = null;
+        foreach (var childState in states)
+            if (childState.state.name == "Locomotion")
+                tree = childState.state.motion as UnityEditor.Animations.BlendTree;
+
+        Require(tree != null, "Locomotion does not contain a Blend Tree");
+        Require(tree.blendParameter == "locomotionSpeed", "Wrong Locomotion blend parameter");
+        Require(tree.children.Length == 3, "Locomotion must contain exactly Idle, Walk and Run");
+
+        var expectedThresholds = new Dictionary<string, float>
+        {
+            { "Idle", 0f }, { "Walk", 3f }, { "Run", 8f }
+        };
+        foreach (var child in tree.children)
+        {
+            Require(child.motion != null && expectedThresholds.ContainsKey(child.motion.name),
+                "Unexpected motion in Locomotion Blend Tree");
+            Require(Mathf.Abs(child.threshold - expectedThresholds[child.motion.name]) < 0.001f,
+                "Wrong threshold for " + child.motion.name + ": " + child.threshold);
+        }
     }
 
     static void SharedRigAnimations()
