@@ -423,9 +423,9 @@ public static class TraversalRegressionChecks
         animator.Rebind();
         animator.Play("Locomotion", 0, 0f);
         animator.Update(0f);
-        bridge.SetMovementState(true, 0f, 3f, true, false, false);
+        bridge.SetMovementState(true, 0f, 3f, false);
         animator.Update(0.1f);
-        bridge.SetMovementState(true, 0f, 0f, false, false, false);
+        bridge.SetMovementState(true, 0f, 0f, false);
         for (int i = 0; i < 30; i++)
         {
             Invoke(bridge, "Update");
@@ -487,18 +487,21 @@ public static class TraversalRegressionChecks
             Require(clip != null && clip.humanMotion && clip.length > 0f, "Invalid standalone clip: " + name);
             bool assigned = false;
             foreach (var state in controller.layers[0].stateMachine.states)
+            {
                 if (state.state.name == name && state.state.motion == clip) assigned = true;
+                var tree = state.state.motion as UnityEditor.Animations.BlendTree;
+                if (tree != null)
+                    foreach (var child in tree.children)
+                        if (child.motion == clip) assigned = true;
+            }
             Require(assigned, "Controller does not use standalone clip: " + name);
             foreach (var dependency in AssetDatabase.GetDependencies(path))
                 Require(!dependency.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase), "Animation still depends on an FBX: " + name);
             animator.Rebind();
-            animator.SetFloat("runPlaybackSpeed", 1f);
-            animator.Play(name, 0, 0.15f);
-            animator.Update(0f);
+            clip.SampleAnimation(animator.gameObject, clip.length * 0.15f);
             var before = new Quaternion[bones.Count];
             for (int i = 0; i < bones.Count; i++) before[i] = bones[i].localRotation;
-            animator.Play(name, 0, 0.45f);
-            animator.Update(0f);
+            clip.SampleAnimation(animator.gameObject, clip.length * 0.45f);
             float movement = 0f;
             for (int i = 0; i < bones.Count; i++) movement += Quaternion.Angle(before[i], bones[i].localRotation);
             Require(movement > 0.1f, "Clip does not animate the shared bones: " + name);

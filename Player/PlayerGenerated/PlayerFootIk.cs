@@ -25,12 +25,15 @@ public class PlayerFootIk : MonoBehaviour
     [SerializeField, Range(0f, 80f)] float maxFootAngle = 40f;
     [SerializeField, Min(0f)] float maxBodyDrop = 0.18f;
     [SerializeField, Min(0.01f)] float bodySmoothTime = 0.08f;
+    [SerializeField, Min(0f)] float maxSlopeBodyDrop = 0.35f;
+    [SerializeField, Range(0f, 1f)] float kneeHintWeight = 0.6f;
 
     readonly RaycastHit[] rayHits = new RaycastHit[8];
     readonly FootTarget leftFoot = new FootTarget(AvatarIKGoal.LeftFoot);
     readonly FootTarget rightFoot = new FootTarget(AvatarIKGoal.RightFoot);
 
     Transform playerRoot;
+    PlayerClimbIk climbIk;
     float ikWeight;
     float bodyOffset;
     float bodyOffsetVelocity;
@@ -44,6 +47,7 @@ public class PlayerFootIk : MonoBehaviour
         public Vector3 Position;
         public Quaternion Rotation;
         public Vector3 AnimatedPosition;
+        public float Lift;
         public bool HasSurface;
 
         public FootTarget(AvatarIKGoal goal)
@@ -60,6 +64,7 @@ public class PlayerFootIk : MonoBehaviour
             animationBridge = GetComponentInParent<PlayerAnimationBridge>();
 
         playerRoot = animationBridge != null ? animationBridge.transform : transform.root;
+        climbIk = GetComponent<PlayerClimbIk>();
 
         if (animator == null || !animator.isHuman)
         {
@@ -76,6 +81,15 @@ public class PlayerFootIk : MonoBehaviour
         Vector3 characterUp = playerRoot.up;
         float wantedWeight = CalculateWantedWeight();
         ikWeight = Mathf.MoveTowards(ikWeight, wantedWeight, weightFadeSpeed * Time.deltaTime);
+
+        // One callback owns both foot goals. Climbing also writes the hands here,
+        // avoiding callback order conflicts between two IK components.
+        if (climbIk != null && climbIk.ApplyContacts())
+        {
+            bodyOffset = Mathf.MoveTowards(bodyOffset, 0f, Time.deltaTime);
+            animator.bodyPosition += characterUp * bodyOffset;
+            return;
+        }
 
         bool hasLeftFoot = FindFootSurface(leftFoot, characterUp);
         bool hasRightFoot = FindFootSurface(rightFoot, characterUp);
@@ -99,6 +113,10 @@ public class PlayerFootIk : MonoBehaviour
     {
         foot.AnimatedPosition = animator.GetIKPosition(foot.Goal);
         Quaternion animatedRotation = animator.GetIKRotation(foot.Goal);
+        // Baked from the actual clip on this Avatar, and blended by the same tree.
+        // A swinging foot keeps its authored clearance above the sampled surface.
+        foot.Lift = Mathf.Max(0f, animator.GetFloat(
+            foot.Goal == AvatarIKGoal.LeftFoot ? "leftFootLift" : "rightFootLift"));
         Vector3 rayOrigin = foot.AnimatedPosition + characterUp * rayStartHeight;
         float castDistance = rayStartHeight + rayDistance;
 
@@ -108,7 +126,7 @@ public class PlayerFootIk : MonoBehaviour
             return false;
         }
 
-        Vector3 wantedPosition = hit.point + hit.normal * soleHeight;
+        Vector3 wantedPosition = hit.point + characterUp * (soleHeight + foot.Lift);
         Quaternion wantedRotation = CalculateFootRotation(animatedRotation, hit.normal);
         SmoothTargetWithSurface(foot, hit.transform, wantedPosition, wantedRotation);
         foot.HasSurface = true;
@@ -179,7 +197,13 @@ public class PlayerFootIk : MonoBehaviour
             wantedOffset = Mathf.Min(wantedOffset,
                 Vector3.Dot(rightFoot.Position - rightFoot.AnimatedPosition, characterUp));
 
-        wantedOffset = Mathf.Clamp(wantedOffset, -maxBodyDrop, 0f) * ikWeight;
+        // Lower the pelvis toward the lower support. This leaves the uphill knee
+        // free to bend instead of extending both legs and lifting the downhill foot.
+        float heightDifference = hasLeftFoot && hasRightFoot
+            ? Mathf.Abs(Vector3.Dot(leftFoot.Position - rightFoot.Position, characterUp)
+                - leftFoot.Lift + rightFoot.Lift) : 0f;
+        float dropLimit = Mathf.Max(maxBodyDrop, Mathf.Min(maxSlopeBodyDrop, heightDifference));
+        wantedOffset = Mathf.Clamp(wantedOffset, -dropLimit, 0f) * ikWeight;
         bodyOffset = Mathf.SmoothDamp(bodyOffset, wantedOffset,
             ref bodyOffsetVelocity, bodySmoothTime);
         animator.bodyPosition += characterUp * bodyOffset;
@@ -190,6 +214,13 @@ public class PlayerFootIk : MonoBehaviour
         float footWeight = hasSurface ? ikWeight : 0f;
         animator.SetIKPositionWeight(foot.Goal, footWeight);
         animator.SetIKRotationWeight(foot.Goal, footWeight);
+        bool left = foot.Goal == AvatarIKGoal.LeftFoot;
+        var thigh = animator.GetBoneTransform(left ? HumanBodyBones.LeftUpperLeg : HumanBodyBones.RightUpperLeg);
+        var hint = left ? AvatarIKHint.LeftKnee : AvatarIKHint.RightKnee;
+        animator.SetIKHintPositionWeight(hint, footWeight * kneeHintWeight);
+        if (thigh != null)
+            animator.SetIKHintPosition(hint, thigh.position + animator.transform.forward * 0.5f
+                - playerRoot.up * 0.25f);
 
         if (!hasSurface)
             return;

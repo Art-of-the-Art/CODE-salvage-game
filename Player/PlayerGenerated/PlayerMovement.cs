@@ -43,6 +43,7 @@ public class PlayerMovement : MonoBehaviour
     Quaternion currentMoveRotation;
     Vector3 currentVelocity;
     Vector3 lockedAirVelocity;
+    Vector3 airFacingDirection;
     Vector3 previousGroundVelocity;
     float stationaryJumpTimer;
     float stationaryJumpVisualOffset;
@@ -209,7 +210,10 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
-        animationBridge.RotateTowardsVelocity(currentVelocity - groundProbe.CurrentGroundVelocity, turnSpeed);
+        // Ground pressure points uphill on a slope. It must never turn an idle model.
+        if (HasMoveInput(moveInput))
+            animationBridge.RotateTowardsVelocity(Vector3.ProjectOnPlane(
+                currentVelocity - groundProbe.CurrentGroundVelocity, groundProbe.GroundNormal), turnSpeed);
     }
 
     // World velocity = motion relative to the floor + motion of the floor itself.
@@ -269,7 +273,8 @@ public class PlayerMovement : MonoBehaviour
             SetModelVerticalOffset(Mathf.MoveTowards(stationaryJumpVisualOffset, 0f, Time.fixedDeltaTime * stationaryJumpVisualDrop / recoverDuration));
         }
 
-        animationBridge.RotateTowardsVelocity(currentVelocity, turnSpeed);
+        // Preserve takeoff heading; support velocity and slope pressure are not steering.
+        animationBridge.RotateTowardsVelocity(airFacingDirection, turnSpeed);
 
         if (climbMotor.TryAutoStick(frontDetector.LowerHit, currentVelocity, rb))
         {
@@ -368,6 +373,7 @@ public class PlayerMovement : MonoBehaviour
 
         ClearAirVelocityLock();
         LockAirVelocityFromCurrent();
+        airFacingDirection = awayFromWall;
         SwitchState(MoveState.Airborne);
     }
 
@@ -437,10 +443,7 @@ public class PlayerMovement : MonoBehaviour
         bool climbingAnimation = currentState == MoveState.Climbing;
         bool climbingMovement = climbingAnimation && moving;
         bool groundedAnimation = currentState == MoveState.Grounded;
-        bool runningAnimation = groundedAnimation && moving && input.RunHeld;
-        bool walkingAnimation = groundedAnimation && moving && !runningAnimation;
-
-        animationBridge.SetMovementState(groundedAnimation, currentVelocity.y, locomotionSpeed, walkingAnimation, runningAnimation, climbingAnimation, climbingMovement);
+        animationBridge.SetMovementState(groundedAnimation, currentVelocity.y, locomotionSpeed, climbingAnimation, climbingMovement);
     }
 
     // Shows the current movement and animation state in the debug HUD.
@@ -551,6 +554,7 @@ public class PlayerMovement : MonoBehaviour
     void LockAirVelocityFromCurrent()
     {
         lockedAirVelocity = GetHorizontalVelocity(currentVelocity);
+        airFacingDirection = GetForwardSource().forward;
         hasLockedAirVelocity = true;
     }
 
