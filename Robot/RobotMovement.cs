@@ -2,6 +2,7 @@
 
 using UnityEngine;
 
+[DefaultExecutionOrder(-50)]
 [RequireComponent(typeof(Rigidbody))]
 public class RobotMovement : MonoBehaviour
 {
@@ -24,81 +25,96 @@ public class RobotMovement : MonoBehaviour
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
+        stepStartPosition = stepEndPosition = rb.position;
+        stepStartRotation = stepEndRotation = rb.rotation;
     }
+
+    // The player reads the same planned step before PhysX moves either body.
+    Vector3 stepStartPosition;
+    Quaternion stepStartRotation;
+    Vector3 stepEndPosition;
+    Quaternion stepEndRotation;
 
     void FixedUpdate()
     {
-        /*
+        stepStartPosition = stepEndPosition = rb.position;
+        stepStartRotation = stepEndRotation = rb.rotation;
 
-        */
         if (!hasTarget)
         {
-            Vector3 currentPosition = rb.position;
-
-            // Eсли у робота нет цели, то он ищет случайную точку на земле в пределах targetDistance и пытается туда пойти.
-            for (int i = 0; i < targetAttempts; i++) 
-            {
-                Vector2 random = Random.insideUnitCircle.normalized;
-                if (random == Vector2.zero)
-                    random = Vector2.forward;
-                Vector3 point = currentPosition + new Vector3(random.x, 0f, random.y) * targetDistance;
-                // берем рандомную точку в пределах targetDistance от текущей позиции робота
-                    // 1. делаем random: рандомную точку (Random.insideUnitCircle) 
-                    // 2. на границе круга (за это отвечает .normalized)
-                    // 3. если вдруг случайно получилось (0,0), то продолжаем ехать вперед (Vector2.forward)
-                    // 4. выбрав направление, ставим целевую точку в этом направлении на расстоянии targetDistance от текущей позиции робота
-                Ray ray = new Ray(new Vector3(point.x, 1000f, point.z), Vector3.down);
-                // стреляем в эту точку лучом с высоты 1000
-
-                if (!Physics.Raycast(ray, out RaycastHit hit, 2000f, terrainLayer, QueryTriggerInteraction.Ignore))
-                    continue; // если луч не попал в землю, то переходим к следующей попытке поиска точки
-
-                Collider collider = hit.collider; // Забираем коллайдер обьекта в который мы попали лучом
-                if (collider.GetComponent<Terrain>() == null && collider.name != terrainName && collider.transform.root.name != terrainName)
-                    continue; // Если это не Terrain, то продолжаем искать новую точку.
-
-                moveDirection = hit.point - currentPosition; // позиция куда мы идем = позиция точки на земле - текущая позиция робота
-                moveDirection.y = 0f; // обнуляем высоту
-                distanceLeft = moveDirection.magnitude; // расстояние до точки = длина вектора в направлении движения
-                if (distanceLeft <= arrivalDistance) // если расстояние до точки меньше arrivalDistance, то продолжаем искать новую точку
-                                                     // ГАВНО ГАВНО ГАВНО
-                                                     // НАДО ПЕРЕПИСАТЬ ГАВНО
-                    continue;
-
-                moveDirection.Normalize();
-                targetRotation = Quaternion.LookRotation(moveDirection, Vector3.up);
-                turning = Quaternion.Angle(rb.rotation, targetRotation) > turnDoneAngle;
-                hasTarget = true;
-                break;
-            }
-
+            TryChooseTarget();
             return;
         }
-
-        // if (!hasTarget)
-        //     return;
-
         if (turning)
         {
-            Quaternion nextRotation = Quaternion.RotateTowards(rb.rotation, targetRotation, rotationSpeed * Time.fixedDeltaTime);
-            rb.MoveRotation(nextRotation);
-            turning = Quaternion.Angle(nextRotation, targetRotation) > turnDoneAngle;
+            TurnTowardsTarget();
             return;
         }
+        MoveTowardsTarget();
+    }
 
+    // Exact displacement of a point, including the arc around the robot's pivot.
+    public Vector3 GetPointVelocity(Vector3 worldPoint)
+    {
+        Vector3 offsetFromRobotOrigin = worldPoint - stepStartPosition;
+        Quaternion rotationDelta = stepEndRotation * Quaternion.Inverse(stepStartRotation);
+        Vector3 nextPoint = stepEndPosition + rotationDelta * offsetFromRobotOrigin;
+        return (nextPoint - worldPoint) / Time.fixedDeltaTime;
+    }
+
+    void TryChooseTarget()
+    {
+        for (int attempt = 0; attempt < targetAttempts; attempt++)
+        {
+            // Normalization chooses a direction on the circle, not a distance inside it.
+            Vector2 direction = Random.insideUnitCircle.normalized;
+            if (direction == Vector2.zero)
+                direction = Vector2.up;
+            Vector3 point = rb.position + new Vector3(direction.x, 0f, direction.y) * targetDistance;
+            Ray ray = new Ray(new Vector3(point.x, 1000f, point.z), Vector3.down);
+            if (!Physics.Raycast(ray, out RaycastHit hit, 2000f, terrainLayer, QueryTriggerInteraction.Ignore))
+                continue;
+            if (!IsTerrain(hit.collider))
+                continue;
+
+            moveDirection = hit.point - rb.position;
+            moveDirection.y = 0f;
+            distanceLeft = moveDirection.magnitude;
+            if (distanceLeft <= arrivalDistance)
+                continue;
+
+            moveDirection.Normalize();
+            targetRotation = Quaternion.LookRotation(moveDirection, Vector3.up);
+            turning = Quaternion.Angle(rb.rotation, targetRotation) > turnDoneAngle;
+            hasTarget = true;
+            return;
+        }
+    }
+
+    bool IsTerrain(Collider candidate)
+    {
+        return candidate.GetComponent<Terrain>() != null
+            || candidate.name == terrainName || candidate.transform.root.name == terrainName;
+    }
+
+    void TurnTowardsTarget()
+    {
+        // Specify the next orientation; this does not apply torque.
+        stepEndRotation = Quaternion.RotateTowards(rb.rotation, targetRotation, rotationSpeed * Time.fixedDeltaTime);
+        rb.MoveRotation(stepEndRotation);
+        turning = Quaternion.Angle(stepEndRotation, targetRotation) > turnDoneAngle;
+    }
+
+    void MoveTowardsTarget()
+    {
         if (distanceLeft <= arrivalDistance)
         {
             hasTarget = false;
             return;
         }
-
         float step = Mathf.Min(moveSpeed * Time.fixedDeltaTime, distanceLeft);
-        rb.MovePosition(rb.position + moveDirection * step);
+        stepEndPosition = rb.position + moveDirection * step;
+        rb.MovePosition(stepEndPosition);
         distanceLeft -= step;
     }
-
-    // ---------------------------------------------------------------------
-    // Service methods
-    // ---------------------------------------------------------------------
-
 }

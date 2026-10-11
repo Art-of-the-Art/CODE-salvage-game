@@ -10,6 +10,8 @@ public class PlayerGroundProbe : MonoBehaviour
     [SerializeField] float maxGroundAngle = 55f;
     [SerializeField] bool debugGroundCheck;
 
+    Rigidbody playerBody;
+    Collider groundCollider;
     Transform currentGround;
     Vector3 lastGroundPosition;
     Quaternion lastGroundRotation;
@@ -21,12 +23,19 @@ public class PlayerGroundProbe : MonoBehaviour
     public RaycastHit GroundHit { get; private set; }
     public Vector3 GroundNormal { get; private set; } = Vector3.up;
     public Transform CurrentGround => currentGround;
+    public Collider CurrentGroundCollider => groundCollider;
+    public Transform CurrentSupportTransform => groundCollider != null && groundCollider.attachedRigidbody != null
+        ? groundCollider.attachedRigidbody.transform
+        : currentGround;
     public Vector3 CurrentGroundVelocity => currentGroundVelocity;
+
+    void Awake() => playerBody = GetComponent<Rigidbody>();
 
     // Checks whether the player is standing on a valid walkable surface.
     public void Probe()
     {
-        Vector3 rayOrigin = transform.position + Vector3.up * groundProbeOriginOffset;
+        Vector3 bodyPosition = playerBody != null ? playerBody.position : transform.position;
+        Vector3 rayOrigin = bodyPosition + Vector3.up * groundProbeOriginOffset;
         bool hitSomething = Physics.SphereCast(
             rayOrigin,
             groundProbeRadius,
@@ -38,7 +47,9 @@ public class PlayerGroundProbe : MonoBehaviour
         );
 
         GroundHit = hit;
-        IsGrounded = hitSomething && Vector3.Angle(hit.normal, Vector3.up) <= maxGroundAngle;
+        groundCollider = hit.collider;
+        IsGrounded = hitSomething && Vector3.Angle(hit.normal, Vector3.up) <= maxGroundAngle
+            && hit.distance <= groundProbeOriginOffset - groundProbeRadius + 0.15f;
 
         if (IsGrounded)
         {
@@ -62,22 +73,45 @@ public class PlayerGroundProbe : MonoBehaviour
             Debug.Log($"GROUND MISS: rayOrigin.y = {rayOrigin.y:F2}, playerPos.y = {transform.position.y:F2}");
     }
 
-    // Always sample surface motion; carry the body only while movement owns ground contact.
-    public void ApplyGroundDelta(Rigidbody rb, bool carryPlayer = true)
+    // Measure support motion only. PlayerMovement adds it to walking velocity once.
+    public void SampleGroundVelocity(Vector3 bodyPosition)
     {
         currentGroundVelocity = Vector3.zero;
-
-        if (!IsGrounded || currentGround == null || currentGround == transform)
+        if (!IsGrounded || currentGround == null)
             return;
 
-        Vector3 totalDelta = GetSurfaceDelta(currentGround, lastGroundPosition, lastGroundRotation, rb.position);
-
-        if (carryPlayer && totalDelta.sqrMagnitude > 0f)
-            rb.position += totalDelta;
-
-        currentGroundVelocity = totalDelta / Time.fixedDeltaTime;
+        Rigidbody supportBody = groundCollider.attachedRigidbody;
+        if (supportBody != null)
+            currentGroundVelocity = GetPointVelocity(groundCollider, bodyPosition);
+        else
+        {
+            Quaternion rotationDelta = currentGround.rotation * Quaternion.Inverse(lastGroundRotation);
+            Vector3 offsetFromSurfaceOrigin = bodyPosition - lastGroundPosition;
+            Vector3 surfaceDelta = currentGround.position - lastGroundPosition
+                + rotationDelta * offsetFromSurfaceOrigin - offsetFromSurfaceOrigin;
+            currentGroundVelocity = surfaceDelta / Time.fixedDeltaTime;
+        }
         lastGroundPosition = currentGround.position;
         lastGroundRotation = currentGround.rotation;
+    }
+
+    // Shared by floor and wall contacts. Read physics poses, not interpolated visuals.
+    public static void GetSurfacePose(Collider surface, out Vector3 position, out Quaternion rotation)
+    {
+        Rigidbody body = surface.attachedRigidbody;
+        position = body != null ? body.position : surface.transform.position;
+        rotation = body != null ? body.rotation : surface.transform.rotation;
+    }
+
+    public static Vector3 GetPointVelocity(Collider surface, Vector3 worldPoint)
+    {
+        if (surface == null || surface.attachedRigidbody == null)
+            return Vector3.zero;
+        Rigidbody body = surface.attachedRigidbody;
+        RobotMovement robot = body.GetComponent<RobotMovement>();
+        if (robot != null && robot.isActiveAndEnabled)
+            return robot.GetPointVelocity(worldPoint);
+        return body.GetPointVelocity(worldPoint);
     }
 
     // Clears the current ground contact when the player leaves the floor.
@@ -85,6 +119,7 @@ public class PlayerGroundProbe : MonoBehaviour
     {
         IsGrounded = false;
         GroundHit = default;
+        groundCollider = null;
         GroundNormal = Vector3.up;
         currentGroundVelocity = Vector3.zero;
         SetCurrentGround(null);
@@ -110,13 +145,4 @@ public class PlayerGroundProbe : MonoBehaviour
         lastGroundRotation = currentGround.rotation;
     }
 
-    // Calculates how much a moving or rotating surface should carry the player.
-    static Vector3 GetSurfaceDelta(Transform surface, Vector3 lastPosition, Quaternion lastRotation, Vector3 bodyPosition)
-    {
-        Vector3 positionDelta = surface.position - lastPosition;
-        Quaternion rotationDelta = surface.rotation * Quaternion.Inverse(lastRotation);
-        Vector3 localOffset = bodyPosition - lastPosition;
-        Vector3 rotatedOffset = rotationDelta * localOffset;
-        return positionDelta + rotatedOffset - localOffset;
-    }
 }

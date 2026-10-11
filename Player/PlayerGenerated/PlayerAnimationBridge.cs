@@ -55,9 +55,9 @@ public class PlayerAnimationBridge : MonoBehaviour
     bool desiredRunning;
     bool desiredClimbing;
     bool desiredClimbMoving;
-    bool currentlyInWalk;
-    bool currentlyInRun;
-    bool currentlyInClimb;
+    bool lastRequestedWalk;
+    bool lastRequestedRun;
+    bool lastRequestedClimb;
     bool isGroundedAnimation = true;
     bool isFallingAnimation;
     bool landingAnimationActive;
@@ -208,11 +208,11 @@ public class PlayerAnimationBridge : MonoBehaviour
             float playbackSpeed = desiredClimbing && !desiredClimbMoving ? 0f : Mathf.Max(0.05f, eased * maxPlaybackSpeed);
             SetFloatIfPresent(playbackSpeedParameterHash, hasPlaybackSpeedParameter, playbackSpeed);
 
-            if (currentlyInWalk || currentlyInRun || currentlyInClimb)
+            if (lastRequestedWalk || lastRequestedRun || lastRequestedClimb)
             {
-                bool keepWalking = desiredWalking || (locomotionRamp01 > LocomotionKeepThreshold && currentlyInWalk);
-                bool keepRunning = desiredRunning || (locomotionRamp01 > LocomotionKeepThreshold && currentlyInRun);
-                bool keepClimbing = desiredClimbing || (locomotionRamp01 > LocomotionKeepThreshold && currentlyInClimb);
+                bool keepWalking = desiredWalking || (locomotionRamp01 > LocomotionKeepThreshold && lastRequestedWalk);
+                bool keepRunning = desiredRunning || (locomotionRamp01 > LocomotionKeepThreshold && lastRequestedRun);
+                bool keepClimbing = desiredClimbing || (locomotionRamp01 > LocomotionKeepThreshold && lastRequestedClimb);
                 SetLocomotionBools(keepWalking, keepRunning, keepClimbing);
             }
         }
@@ -245,7 +245,7 @@ public class PlayerAnimationBridge : MonoBehaviour
         SetBoolIfPresent(groundedParameterHash, hasGroundedParameter, isGroundedAnimation);
         SetFloatIfPresent(verticalVelocityParameterHash, hasVerticalVelocityParameter, yVelocity);
         SetBoolIfPresent(fallingParameterHash, hasFallingParameter, isFallingAnimation);
-        SetLocomotionBools(desiredWalking || currentlyInWalk, desiredRunning || currentlyInRun, desiredClimbing || currentlyInClimb);
+        SetLocomotionBools(desiredWalking || lastRequestedWalk, desiredRunning || lastRequestedRun, desiredClimbing || lastRequestedClimb);
 
         if (climbing)
         {
@@ -263,9 +263,9 @@ public class PlayerAnimationBridge : MonoBehaviour
 
         if (!wasGrounded)
         {
-            currentlyInWalk = desiredWalking;
-            currentlyInRun = desiredRunning;
-            currentlyInClimb = false;
+            lastRequestedWalk = desiredWalking;
+            lastRequestedRun = desiredRunning;
+            lastRequestedClimb = false;
             SetLocomotionBools(desiredWalking, desiredRunning, false);
 
             if (hasLandState && useDirectCrossFade)
@@ -408,96 +408,51 @@ public class PlayerAnimationBridge : MonoBehaviour
     // Service methods
     // ---------------------------------------------------------------------
 
-    // Moves directly into the needed locomotion state when the desired state changes.
+    // The flags describe our last request, not the Animator's evaluated blend state.
     void UpdateLocomotionCrossFade()
     {
         if (landingAnimationActive || !useDirectCrossFade)
             return;
-
-        if (desiredClimbing && !currentlyInClimb && hasClimbState)
-        {
-            currentlyInClimb = true;
-            currentlyInWalk = false;
-            currentlyInRun = false;
-            SetLocomotionBools(false, false, true);
-            animator.CrossFadeInFixedTime(climbStateHash, locomotionCrossFadeDuration);
-            return;
-        }
-
-        if (desiredRunning && !currentlyInRun && hasRunState)
-        {
-            currentlyInRun = true;
-            currentlyInWalk = false;
-            currentlyInClimb = false;
-            SetLocomotionBools(false, true, false);
-            animator.CrossFadeInFixedTime(runStateHash, locomotionCrossFadeDuration);
-            return;
-        }
-
-        if (desiredWalking && !currentlyInWalk && hasWalkState)
-        {
-            currentlyInWalk = true;
-            currentlyInRun = false;
-            currentlyInClimb = false;
-            SetLocomotionBools(true, false, false);
-            animator.CrossFadeInFixedTime(walkStateHash, locomotionCrossFadeDuration);
-            return;
-        }
-
-        if (!desiredWalking && !desiredRunning && !desiredClimbing && (currentlyInWalk || currentlyInRun || currentlyInClimb) && hasIdleState)
-        {
-            ClearLocomotionState();
-            animator.CrossFadeInFixedTime(idleStateHash, idleCrossFadeDuration);
-        }
+        bool changed = desiredWalking != lastRequestedWalk
+            || desiredRunning != lastRequestedRun || desiredClimbing != lastRequestedClimb;
+        if (changed)
+            CrossFadeToCurrentLocomotion(desiredWalking || desiredRunning || desiredClimbing
+                ? locomotionCrossFadeDuration : idleCrossFadeDuration);
     }
 
-    // Fades to the locomotion state that matches the stored desired flags.
+    // One selection path is shared by normal movement and landing completion.
     void CrossFadeToCurrentLocomotion(float duration)
     {
         if (!useDirectCrossFade)
             return;
-
+        int stateHash;
         if (desiredClimbing && hasClimbState)
-        {
-            currentlyInClimb = true;
-            currentlyInWalk = false;
-            currentlyInRun = false;
-            SetLocomotionBools(false, false, true);
-            animator.CrossFadeInFixedTime(climbStateHash, duration);
+            stateHash = climbStateHash;
+        else if (desiredRunning && hasRunState)
+            stateHash = runStateHash;
+        else if (desiredWalking && hasWalkState)
+            stateHash = walkStateHash;
+        else if (hasIdleState)
+            stateHash = idleStateHash;
+        else
             return;
-        }
 
-        if (desiredRunning && hasRunState)
-        {
-            currentlyInRun = true;
-            currentlyInWalk = false;
-            currentlyInClimb = false;
-            SetLocomotionBools(false, true, false);
-            animator.CrossFadeInFixedTime(runStateHash, duration);
-            return;
-        }
-
-        if (desiredWalking && hasWalkState)
-        {
-            currentlyInWalk = true;
-            currentlyInRun = false;
-            currentlyInClimb = false;
-            SetLocomotionBools(true, false, false);
-            animator.CrossFadeInFixedTime(walkStateHash, duration);
-            return;
-        }
-
-        ClearLocomotionState();
-        if (hasIdleState)
-            animator.CrossFadeInFixedTime(idleStateHash, duration);
+        lastRequestedClimb = stateHash == climbStateHash;
+        lastRequestedRun = stateHash == runStateHash;
+        lastRequestedWalk = stateHash == walkStateHash;
+        if (stateHash == idleStateHash)
+            ClearLocomotionState();
+        else
+            SetLocomotionBools(lastRequestedWalk, lastRequestedRun, lastRequestedClimb);
+        animator.CrossFadeInFixedTime(stateHash, duration);
     }
 
     // Clears the stored walk, run, and climb animation flags.
     void ClearLocomotionState()
     {
-        currentlyInWalk = false;
-        currentlyInRun = false;
-        currentlyInClimb = false;
+        lastRequestedWalk = false;
+        lastRequestedRun = false;
+        lastRequestedClimb = false;
         locomotionRamp01 = 0f;
         desiredClimbMoving = false;
         SetLocomotionBools(false, false, false);

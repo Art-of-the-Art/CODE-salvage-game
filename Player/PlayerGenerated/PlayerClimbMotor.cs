@@ -19,10 +19,10 @@ public class PlayerClimbMotor : MonoBehaviour
     [SerializeField] float ledgeExtraDownDistance = 1f;
 
     Transform currentWall;
-    Vector3 lastWallPosition;
-    Quaternion lastWallRotation;
+    Collider wallCollider;
+    Vector3 wallLocalAnchor;
+    Vector3 wallLocalNormal;
     Vector3 surfaceNormal;
-    Vector3 surfacePoint;
     float lastWallContactTime;
     Transform mountSurface;
     Collider mountCollider;
@@ -32,12 +32,14 @@ public class PlayerClimbMotor : MonoBehaviour
     float currentMountDuration;
 
     public LayerMask ClimbableLayer => climbableLayer;
-    public bool HasWall => currentWall != null;
+    public bool HasWall => currentWall != null && wallCollider != null
+        && wallCollider.enabled && wallCollider.gameObject.activeInHierarchy;
+    public Vector3 TargetPosition { get; private set; }
     public bool HasMountSurface => mountSurface != null && mountCollider != null && mountCollider.enabled && mountCollider.gameObject.activeInHierarchy;
     public Vector3 SurfaceNormal => surfaceNormal;
 
     // Attaches the player to a steep climbable wall when they hit it with enough speed.
-    public bool TryAutoStick(RaycastHit lowerHit, Vector3 currentVelocity, Rigidbody rb, Transform body)
+    public bool TryAutoStick(RaycastHit lowerHit, Vector3 currentVelocity, Rigidbody rb)
     {
         if (lowerHit.collider == null)
             return false;
@@ -48,86 +50,81 @@ public class PlayerClimbMotor : MonoBehaviour
         if (!IsClimbable(lowerHit.collider) || !isSteep || !movingIntoSurface)
             return false;
 
-        AttachToWall(lowerHit, rb, body);
+        AttachToWall(lowerHit, rb);
         return true;
     }
 
     // Places the player on the wall and stops their previous physics movement.
-    public void AttachToWall(RaycastHit hit, Rigidbody rb, Transform body)
+    public void AttachToWall(RaycastHit hit, Rigidbody rb)
     {
 
         surfaceNormal = hit.normal;
-        surfacePoint = hit.point;
-        currentWall = hit.transform;
-        lastWallPosition = currentWall.position;
-        lastWallRotation = currentWall.rotation;
-        lastWallContactTime = Time.time;
-
-        body.rotation = Quaternion.LookRotation(-surfaceNormal, Vector3.up);
-        body.position = surfacePoint + surfaceNormal * wallOffset;
-
+        TargetPosition = hit.point + hit.normal * wallOffset;
+        RememberWallContact(hit, TargetPosition);
+        // A single initial placement. Continuous climbing below uses velocity only.
+        rb.position = TargetPosition;
+        rb.rotation = Quaternion.LookRotation(-surfaceNormal, Vector3.up);
         rb.linearVelocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
     }
 
-    // Stops treating the current wall as an active climb surface.
     public void DetachFromWall()
     {
         currentWall = null;
+        wallCollider = null;
     }
 
-    // Carries the player along when the climbed wall moves or rotates.
-    public void ApplyWallDelta(Transform body)
+    // Reconstruct the saved contact at the wall's CURRENT physics pose.
+    // No body movement occurs while probes and the next target are being calculated.
+    public void RefreshWallContact()
     {
-        if (currentWall == null)
+        if (!HasWall)
             return;
-
-        Quaternion rotationDelta = currentWall.rotation * Quaternion.Inverse(lastWallRotation);
-        Vector3 positionDelta = GetSurfaceDelta(currentWall, lastWallPosition, lastWallRotation, body.position);
-
-        body.rotation = rotationDelta * body.rotation;
-        body.position += positionDelta;
-        surfaceNormal = rotationDelta * surfaceNormal;
-
-        lastWallPosition = currentWall.position;
-        lastWallRotation = currentWall.rotation;
+        PlayerGroundProbe.GetSurfacePose(wallCollider, out Vector3 position, out Quaternion rotation);
+        TargetPosition = position + rotation * wallLocalAnchor;
+        surfaceNormal = rotation * wallLocalNormal;
     }
 
-    // Moves the player across the wall while keeping them snapped to the surface.
-    public bool MoveOnWall(Transform body, Vector2 moveInput)
+    public bool MoveOnWall(Vector2 moveInput)
     {
-        if (currentWall == null)
+        if (!HasWall)
             return false;
-
         Vector3 wallUp = GetWallUp();
         Vector3 wallRight = Vector3.Cross(surfaceNormal, wallUp).normalized;
         moveInput = Vector2.ClampMagnitude(moveInput, 1f);
-        Vector3 delta = (wallRight * moveInput.x + wallUp * moveInput.y) * climbSpeed * Time.fixedDeltaTime;
-        body.position += delta;
+        Vector3 candidate = TargetPosition
+            + (wallRight * moveInput.x + wallUp * moveInput.y) * climbSpeed * Time.fixedDeltaTime;
 
-        if (Physics.Raycast(body.position, -surfaceNormal, out RaycastHit hit, wallOffset * 1.5f, climbableLayer, QueryTriggerInteraction.Ignore))
+        if (Physics.Raycast(candidate, -surfaceNormal, out RaycastHit hit,
+            wallOffset * 1.5f, climbableLayer, QueryTriggerInteraction.Ignore))
         {
             surfaceNormal = hit.normal;
-            surfacePoint = hit.point;
-            currentWall = hit.transform;
-            lastWallPosition = currentWall.position;
-            lastWallRotation = currentWall.rotation;
-            lastWallContactTime = Time.time;
-            body.position = hit.point + hit.normal * wallOffset;
-            return true;
+            candidate = hit.point + hit.normal * wallOffset;
+            RememberWallContact(hit, candidate);
         }
+        else if (!IsWithinLedgeGrace())
+            return false;
+        else
+            RememberAnchor(candidate);
 
-        return IsWithinLedgeGrace();
+        // Aim at the NEXT physics pose so player and robot travel together.
+        TargetPosition = candidate + PlayerGroundProbe.GetPointVelocity(wallCollider, candidate) * Time.fixedDeltaTime;
+        return true;
     }
 
-    // Turns the player so they keep facing the climbed surface.
-    public void SolveClimbRotation(Transform body, float turnSpeed)
+    void RememberWallContact(RaycastHit hit, Vector3 bodyPosition)
     {
-        if (currentWall == null)
-            return;
+        currentWall = hit.transform;
+        wallCollider = hit.collider;
+        lastWallContactTime = Time.time;
+        RememberAnchor(bodyPosition);
+    }
 
-        Quaternion targetRotation = Quaternion.LookRotation(-surfaceNormal, Vector3.up);
-        body.rotation = Quaternion.RotateTowards(body.rotation, targetRotation, turnSpeed * Time.fixedDeltaTime);
+    void RememberAnchor(Vector3 bodyPosition)
+    {
+        PlayerGroundProbe.GetSurfacePose(wallCollider, out Vector3 position, out Quaternion rotation);
+        wallLocalAnchor = Quaternion.Inverse(rotation) * (bodyPosition - position);
+        wallLocalNormal = Quaternion.Inverse(rotation) * surfaceNormal;
     }
 
     // Starts pulling the player onto the top of a ledge when a landing point is available.
@@ -136,17 +133,18 @@ public class PlayerClimbMotor : MonoBehaviour
         if (upperHit.collider != null)
             return false;
 
-        if (!IsClimbable(lowerHit.collider) && currentWall == null && !IsWithinLedgeGrace())
+        if (!IsClimbable(lowerHit.collider) && !HasWall)
             return false;
 
+        Vector3 bodyPosition = HasWall ? TargetPosition : body.position;
         Vector3 forward = GetMountForward(body, forwardTransform);
         Vector3 wallUp = GetWallUp();
         Vector3[] searchOrigins =
         {
-            body.position + Vector3.up * mountUpOffset + forward * mountForwardOffset,
-            body.position + Vector3.up * (mountUpOffset + ledgeExtraUpOffset) + forward * mountForwardOffset,
-            body.position + Vector3.up * mountUpOffset + forward * (mountForwardOffset + ledgeExtraForwardOffset),
-            body.position + wallUp * mountUpOffset + forward * (mountForwardOffset + ledgeExtraForwardOffset)
+            bodyPosition + Vector3.up * mountUpOffset + forward * mountForwardOffset,
+            bodyPosition + Vector3.up * (mountUpOffset + ledgeExtraUpOffset) + forward * mountForwardOffset,
+            bodyPosition + Vector3.up * mountUpOffset + forward * (mountForwardOffset + ledgeExtraForwardOffset),
+            bodyPosition + wallUp * mountUpOffset + forward * (mountForwardOffset + ledgeExtraForwardOffset)
         };
 
         RaycastHit landingHit = default;
@@ -169,33 +167,31 @@ public class PlayerClimbMotor : MonoBehaviour
         // Store both ends relative to the contacted collider, including moving robot parts.
         mountSurface = landingHit.collider.transform;
         mountCollider = landingHit.collider;
-        mountStartPosition = mountSurface.InverseTransformPoint(body.position);
-        mountTargetPosition = mountSurface.InverseTransformPoint(landingHit.point);
+        PlayerGroundProbe.GetSurfacePose(mountCollider, out Vector3 position, out Quaternion rotation);
+        Rigidbody playerBody = body.GetComponent<Rigidbody>();
+        Vector3 start = playerBody != null ? playerBody.position : body.position;
+        mountStartPosition = Quaternion.Inverse(rotation) * (start - position);
+        mountTargetPosition = Quaternion.Inverse(rotation) * (landingHit.point - position);
         mountStartTime = Time.time;
         currentMountDuration = Mathf.Max(0.01f, mountDuration);
         return true;
     }
 
     // Moves the player from the wall to the detected top surface.
-    public bool UpdateMount(Transform body, out Vector3 velocityOverride)
+    public bool UpdateMount()
     {
-        velocityOverride = Vector3.zero;
 
 
         if (!HasMountSurface)
             return false;
 
-        Vector3 start = mountSurface.TransformPoint(mountStartPosition);
-        Vector3 target = mountSurface.TransformPoint(mountTargetPosition);
-        float t = (Time.time - mountStartTime) / currentMountDuration;
-        if (t >= 1f)
-        {
-            body.position = target;
-            return true;
-        }
-
-        body.position = Vector3.Lerp(start, target, t);
-        return false;
+        PlayerGroundProbe.GetSurfacePose(mountCollider, out Vector3 position, out Quaternion rotation);
+        Vector3 start = position + rotation * mountStartPosition;
+        Vector3 target = position + rotation * mountTargetPosition;
+        float t = Mathf.Clamp01((Time.time - mountStartTime + Time.fixedDeltaTime) / currentMountDuration);
+        Vector3 candidate = Vector3.Lerp(start, target, t);
+        TargetPosition = candidate + PlayerGroundProbe.GetPointVelocity(mountCollider, candidate) * Time.fixedDeltaTime;
+        return t >= 1f;
     }
 
     // ---------------------------------------------------------------------
@@ -211,7 +207,7 @@ public class PlayerClimbMotor : MonoBehaviour
     // Keeps a ledge valid briefly after the direct wall ray loses contact.
     bool IsWithinLedgeGrace()
     {
-        return currentWall != null && Time.time - lastWallContactTime <= ledgeGraceDuration;
+        return HasWall && Time.time - lastWallContactTime <= ledgeGraceDuration;
     }
 
     // Chooses the direction the player should move toward while mounting a ledge.
@@ -235,13 +231,4 @@ public class PlayerClimbMotor : MonoBehaviour
         return wallUp.sqrMagnitude > 0.001f ? wallUp.normalized : Vector3.up;
     }
 
-    // Calculates how much a moving or rotating surface should carry the player.
-    static Vector3 GetSurfaceDelta(Transform surface, Vector3 lastPosition, Quaternion lastRotation, Vector3 bodyPosition)
-    {
-        Vector3 positionDelta = surface.position - lastPosition;
-        Quaternion rotationDelta = surface.rotation * Quaternion.Inverse(lastRotation);
-        Vector3 localOffset = bodyPosition - lastPosition;
-        Vector3 rotatedOffset = rotationDelta * localOffset;
-        return positionDelta + rotatedOffset - localOffset;
-    }
 }

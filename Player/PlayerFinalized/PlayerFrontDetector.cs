@@ -16,14 +16,18 @@ public class PlayerFrontDetector : MonoBehaviour
     // Checks what is directly in front of the player at upper and lower height.
     public void Probe(Transform originTransform, Transform forwardTransform)
     {
+        Probe(originTransform.position, forwardTransform.forward);
+    }
+
+    public void Probe(Vector3 bodyPosition, Vector3 forward)
+    {
         UpperObjectName = "None";
         LowerObjectName = "None";
         UpperHit = default;
         LowerHit = default;
 
-        Vector3 forward = forwardTransform.forward;
-        Vector3 upperOrigin = originTransform.position + Vector3.up * upperRayHeightOffset;
-        Vector3 lowerOrigin = originTransform.position + Vector3.up * lowerRayHeightOffset;
+        Vector3 upperOrigin = bodyPosition + Vector3.up * upperRayHeightOffset;
+        Vector3 lowerOrigin = bodyPosition + Vector3.up * lowerRayHeightOffset;
 
         if (Physics.Raycast(upperOrigin, forward, out RaycastHit upperHit, detectionDistance, detectionLayer, QueryTriggerInteraction.Ignore))
         {

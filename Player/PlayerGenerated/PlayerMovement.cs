@@ -36,12 +36,14 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] float stationaryJumpVisualRecoverDuration = 0.18f;
 
     Rigidbody rb;
+    CapsuleCollider capsule;
+    PhysicsMaterial originalMaterial;
+    PhysicsMaterial movementMaterial;
     Vector2 moveInput;
-    Vector3 targetMoveDirection;
     Quaternion currentMoveRotation;
     Vector3 currentVelocity;
     Vector3 lockedAirVelocity;
-    Vector3 pendingStationaryJumpGroundVelocity;
+    Vector3 previousGroundVelocity;
     float stationaryJumpTimer;
     float stationaryJumpVisualOffset;
     bool hasLockedAirVelocity;
@@ -76,15 +78,37 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
+        // The controller owns acceleration and braking. Contact friction must not
+        // apply a second, frame-dependent brake against moving floors and walls.
+        capsule = GetComponent<CapsuleCollider>();
+        if (capsule != null && movementMaterial == null)
+        {
+            originalMaterial = capsule.sharedMaterial;
+            movementMaterial = new PhysicsMaterial("Player controller contact")
+            {
+                staticFriction = 0f, dynamicFriction = 0f,
+                frictionCombine = PhysicsMaterialCombine.Minimum,
+                bounciness = 0f, bounceCombine = PhysicsMaterialCombine.Minimum
+            };
+            capsule.sharedMaterial = movementMaterial;
+        }
         rb.useGravity = false;
         rb.freezeRotation = true;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
         currentMoveRotation = Quaternion.LookRotation(transform.forward);
     }
 
+    void OnDestroy()
+    {
+        if (movementMaterial == null) return;
+        if (capsule != null) capsule.sharedMaterial = originalMaterial;
+        if (Application.isPlaying) Destroy(movementMaterial);
+        else DestroyImmediate(movementMaterial);
+    }
+
     void Update()
     {
-        moveInput = ReadMoveInput();
+        moveInput = input.MoveInput;
 
         if (currentState == MoveState.Grounded)
         {
@@ -95,10 +119,7 @@ public class PlayerMovement : MonoBehaviour
             camForward.Normalize();
             camRight.Normalize();
 
-            targetMoveDirection = camForward * moveInput.y + camRight * moveInput.x;
-            if (HasDirection(targetMoveDirection))
-                targetMoveDirection.Normalize();
-
+            Vector3 targetMoveDirection = camForward * moveInput.y + camRight * moveInput.x;
             if (HasDirection(targetMoveDirection))
             {
                 Quaternion targetRotation = Quaternion.LookRotation(targetMoveDirection);
@@ -111,12 +132,11 @@ public class PlayerMovement : MonoBehaviour
     {
         // Proximity to a floor must not carry a jumping or climbing player.
         groundProbe.Probe();
-        bool carryByGround = currentState == MoveState.Grounded || currentState == MoveState.JumpPreparing;
-        groundProbe.ApplyGroundDelta(rb, carryByGround);
+        groundProbe.SampleGroundVelocity(rb.position);
 
         currentVelocity = rb.linearVelocity;
 
-        frontDetector.Probe(transform, GetForwardSource());
+        frontDetector.Probe(rb.position, GetForwardSource().forward);
 
         switch (currentState)
         {
@@ -143,6 +163,8 @@ public class PlayerMovement : MonoBehaviour
 
         UpdateAnimationState();
         rb.linearVelocity = currentVelocity;
+        previousGroundVelocity = currentState == MoveState.Grounded || currentState == MoveState.JumpPreparing
+            ? groundProbe.CurrentGroundVelocity : Vector3.zero;
     }
 
     void LateUpdate()
@@ -166,44 +188,43 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
-        Vector3 moveDirection = currentMoveRotation * Vector3.forward;
-        if (groundProbe.IsGrounded)
-        {
-            Vector3 projectedMove = Vector3.ProjectOnPlane(moveDirection, groundProbe.GroundNormal);
-            if (HasDirection(projectedMove))
-                moveDirection = projectedMove.normalized;
-        }
-
-        float speed = input.RunHeld ? runSpeed : walkSpeed;
-        Vector3 targetVelocity = moveDirection * speed * moveInput.magnitude;
-        Vector3 currentHorizontal = GetHorizontalVelocity(currentVelocity);
-        float lerpFactor = HasMoveInput(moveInput) ? acceleration : deceleration;
-        Vector3 newHorizontal = Vector3.Lerp(currentHorizontal, targetVelocity, lerpFactor * Time.fixedDeltaTime);
-        SetHorizontalVelocity(newHorizontal);
-        ApplyGravity();
+        UpdateGroundVelocity(moveInput);
 
         if (input.ConsumeJump())
         {
             bool hadMoveInputAtJump = HasMoveInput(moveInput);
-            Vector3 inheritedGroundVelocity = Vector3.ProjectOnPlane(groundProbe.CurrentGroundVelocity, Vector3.up);
 
             ClearModelVerticalOffset();
             animationBridge.PlayJump(hadMoveInputAtJump);
 
             if (!hadMoveInputAtJump && stationaryJumpTakeoffDelay > 0f)
             {
-                pendingStationaryJumpGroundVelocity = inheritedGroundVelocity;
                 stationaryJumpTimer = stationaryJumpTakeoffDelay;
                 SwitchState(MoveState.JumpPreparing);
                 return;
             }
 
-            ExecuteJump(inheritedGroundVelocity);
+            ExecuteJump();
             SwitchState(MoveState.Airborne);
             return;
         }
 
-        animationBridge.RotateTowardsVelocity(currentVelocity, turnSpeed);
+        animationBridge.RotateTowardsVelocity(currentVelocity - groundProbe.CurrentGroundVelocity, turnSpeed);
+    }
+
+    // World velocity = motion relative to the floor + motion of the floor itself.
+    void UpdateGroundVelocity(Vector2 movementInput)
+    {
+        Vector3 normal = groundProbe.GroundNormal;
+        Vector3 direction = Vector3.ProjectOnPlane(currentMoveRotation * Vector3.forward, normal).normalized;
+        float speed = input.RunHeld ? runSpeed : walkSpeed;
+        Vector3 desired = direction * speed * movementInput.magnitude;
+        Vector3 relative = Vector3.ProjectOnPlane(currentVelocity - previousGroundVelocity, normal);
+        float response = HasMoveInput(movementInput) ? acceleration : deceleration;
+        relative = Vector3.Lerp(relative, desired, response * Time.fixedDeltaTime);
+        if (!HasMoveInput(movementInput) && relative.sqrMagnitude < 0.0001f)
+            relative = Vector3.zero;
+        currentVelocity = groundProbe.CurrentGroundVelocity + relative + normal * GroundStickVelocity;
     }
 
     // Holds the player briefly for the standing jump anticipation frames.
@@ -218,11 +239,7 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
-        pendingStationaryJumpGroundVelocity = Vector3.ProjectOnPlane(groundProbe.CurrentGroundVelocity, Vector3.up);
-
-        Vector3 newHorizontal = Vector3.Lerp(GetHorizontalVelocity(currentVelocity), Vector3.zero, deceleration * Time.fixedDeltaTime);
-        SetHorizontalVelocity(newHorizontal);
-        ApplyGravity();
+        UpdateGroundVelocity(Vector2.zero);
 
         float preparationProgress = stationaryJumpTakeoffDelay > 0f
             ? 1f - Mathf.Clamp01(stationaryJumpTimer / stationaryJumpTakeoffDelay)
@@ -234,7 +251,7 @@ public class PlayerMovement : MonoBehaviour
             return;
 
         SetModelVerticalOffset(-stationaryJumpVisualDrop);
-        ExecuteJump(pendingStationaryJumpGroundVelocity);
+        ExecuteJump();
         SwitchState(MoveState.Airborne);
     }
 
@@ -254,7 +271,7 @@ public class PlayerMovement : MonoBehaviour
 
         animationBridge.RotateTowardsVelocity(currentVelocity, turnSpeed);
 
-        if (climbMotor.TryAutoStick(frontDetector.LowerHit, currentVelocity, rb, transform))
+        if (climbMotor.TryAutoStick(frontDetector.LowerHit, currentVelocity, rb))
         {
             SwitchState(MoveState.Climbing);
             return;
@@ -267,30 +284,32 @@ public class PlayerMovement : MonoBehaviour
     // Handles wall movement, wall jump, ledge mounting, and falling from the wall.
     void UpdateClimbing()
     {
+        // Discard contact impulses; this state computes its own velocity every tick.
+        currentVelocity = Vector3.zero;
+        if (!climbMotor.HasWall)
+        {
+            DetachAndEnterAirborne();
+            ApplyGravity();
+            return;
+        }
+        climbMotor.RefreshWallContact();
+        animationBridge.FaceClimbSurface(climbMotor.SurfaceNormal);
         if (input.ConsumeJump())
         {
             StartWallJump();
             return;
         }
-
-
-        climbMotor.ApplyWallDelta(transform);
-        climbMotor.SolveClimbRotation(transform, turnSpeed);
-        animationBridge.FaceClimbSurface(climbMotor.SurfaceNormal);
-        frontDetector.Probe(transform, GetForwardSource());
-
-        int landingMask = 0;
-        landingMask |= groundProbe.GroundLayer.value;
-        landingMask |= climbMotor.ClimbableLayer.value;
+        frontDetector.Probe(climbMotor.TargetPosition, -climbMotor.SurfaceNormal);
+        int landingMask = groundProbe.GroundLayer.value | climbMotor.ClimbableLayer.value;
 
         if (TryStartLedgeMount(landingMask))
             return;
 
-        bool stillOnWall = climbMotor.MoveOnWall(transform, moveInput);
+        bool stillOnWall = climbMotor.MoveOnWall(moveInput);
         animationBridge.FaceClimbSurface(climbMotor.SurfaceNormal);
         if (!stillOnWall)
         {
-            frontDetector.Probe(transform, GetForwardSource());
+            frontDetector.Probe(rb.position, GetForwardSource().forward);
             if (TryStartLedgeMount(landingMask))
                 return;
 
@@ -304,6 +323,7 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
+        currentVelocity = (climbMotor.TargetPosition - rb.position) / Time.fixedDeltaTime;
         if (IsGrounded())
             SwitchState(MoveState.Grounded);
     }
@@ -311,6 +331,7 @@ public class PlayerMovement : MonoBehaviour
     // Finishes the ledge mount and returns control to grounded movement.
     void UpdateMounting()
     {
+        currentVelocity = Vector3.zero;
         input.ConsumeJump();
 
         if (!climbMotor.HasMountSurface)
@@ -320,12 +341,10 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
-        Vector3 velocityOverride = Vector3.zero;
-        if (climbMotor.UpdateMount(transform, out velocityOverride))
-        {
-            currentVelocity = velocityOverride;
+        bool finished = climbMotor.UpdateMount();
+        currentVelocity = (climbMotor.TargetPosition - rb.position) / Time.fixedDeltaTime;
+        if (finished)
             SwitchState(MoveState.Grounded);
-        }
     }
 
     // Pushes the player away from the climbed wall and into the air.
@@ -352,11 +371,9 @@ public class PlayerMovement : MonoBehaviour
         SwitchState(MoveState.Airborne);
     }
 
-    // Applies jump speed and inherits horizontal velocity from moving ground.
-    void ExecuteJump(Vector3 inheritedGroundVelocity)
+    // Horizontal velocity already includes the support: do not add it a second time.
+    void ExecuteJump()
     {
-        currentVelocity.x += inheritedGroundVelocity.x;
-        currentVelocity.z += inheritedGroundVelocity.z;
         currentVelocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
 
         groundProbe.ClearGround();
@@ -402,6 +419,7 @@ public class PlayerMovement : MonoBehaviour
                 break;
 
             case MoveState.Mounting:
+                currentVelocity = Vector3.zero;
                 ClearAirVelocityLock();
                 ClearModelVerticalOffset();
                 break;
@@ -446,12 +464,6 @@ public class PlayerMovement : MonoBehaviour
     // ---------------------------------------------------------------------
     // Service methods
     // ---------------------------------------------------------------------
-
-    // Reads the current movement input.
-    Vector2 ReadMoveInput()
-    {
-        return input.MoveInput;
-    }
 
     // Checks whether the input is strong enough to count as movement.
     static bool HasMoveInput(Vector2 inputVector)
