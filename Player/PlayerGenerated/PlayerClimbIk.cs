@@ -9,6 +9,7 @@ public class PlayerClimbIk : MonoBehaviour
     [SerializeField, Min(0.1f)] float maxContactStretch = 0.45f;
     [SerializeField, Min(0f)] float weightSpeed = 10f;
     [SerializeField, Range(0f, 1f)] float footRotationWeight = 0.65f;
+    [SerializeField, Min(0f)] float bodyWallOffset = 0.3f;
 
     Animator animator;
     PlayerAnimationBridge bridge;
@@ -53,6 +54,9 @@ public class PlayerClimbIk : MonoBehaviour
             SetHandWeightsToZero();
             return false;
         }
+        // The capsule stays at its safe wall distance; only the pose moves closer,
+        // so an extended arm can actually reach a grip on the wall.
+        animator.bodyPosition -= motor.SurfaceNormal * (bodyWallOffset * weight);
         foreach (var contact in contacts) UpdateContact(contact, climbing);
         return true;
     }
@@ -67,7 +71,9 @@ public class PlayerClimbIk : MonoBehaviour
         Vector3 target = valid ? contact.Collider.transform.TransformPoint(contact.LocalPoint) : animated;
 
         // Release the old grip during swing or before the body can overextend a limb.
-        if (phase < 0.3f || !valid || Vector3.Distance(target, animated) > maxContactStretch)
+        // Wall distance is intentional. Only sliding along the wall stretches a grip.
+        float stretch = Vector3.ProjectOnPlane(target - animated, motor.SurfaceNormal).magnitude;
+        if (phase < 0.3f || !valid || stretch > maxContactStretch)
             contact.Planted = false;
         if (climbing && !contact.Planted)
         {

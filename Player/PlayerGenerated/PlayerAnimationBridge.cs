@@ -115,6 +115,13 @@ public class PlayerAnimationBridge : MonoBehaviour
         EnterState(hasMoveInput ? Jump : JumpInPlace, jumpCrossFadeDuration);
     }
 
+    public void SetGroundSpeedImmediately(float speed)
+    {
+        // PlayerMovement already supplies the S-curve; damping it again delays the pose.
+        desiredLocomotionSpeed = Mathf.Max(0f, speed);
+        animator.SetFloat(Speed, desiredLocomotionSpeed);
+    }
+
     void UpdateClimbPlayback()
     {
         if (!IsClimbing)

@@ -17,6 +17,17 @@ public class ThirdPersonCamera : MonoBehaviour
     public float defaultDistance = 5f;
     public float heightOffset = 4f;
 
+    [Header("Running")]
+    [Min(0f)] public float runDistanceHeightFraction = 0.25f;
+    [Min(1f)] public float runFovMultiplier = 1.2f;
+    [Min(0.01f)] public float runEffectSmoothTime = 0.2f;
+    Camera viewCamera;
+    PlayerMovement movement;
+    float baseFov;
+    float modelHeight;
+    float runBlend;
+    float runBlendVelocity;
+
     [Header("Collisions")]
     public float collisionRadius = 0.5f;
     public float collisionSmoothing = 10f;
@@ -51,6 +62,18 @@ public class ThirdPersonCamera : MonoBehaviour
         yaw = player.eulerAngles.y;
         pitch = 0f;
         currentDistance = defaultDistance;
+        movement = player.GetComponent<PlayerMovement>();
+        // Main uses a Pivot with a child Camera; tests may put both on one object.
+        viewCamera = GetComponentInChildren<Camera>();
+        if (viewCamera != null) baseFov = viewCamera.fieldOfView;
+        // Renderer bounds include the whole visible model, unlike the collision capsule.
+        var renderers = player.GetComponentsInChildren<SkinnedMeshRenderer>();
+        if (renderers.Length > 0)
+        {
+            Bounds bounds = renderers[0].bounds;
+            foreach (var renderer in renderers) bounds.Encapsulate(renderer.bounds);
+            modelHeight = bounds.size.y;
+        }
     }
 
     void LateUpdate()
@@ -59,6 +82,9 @@ public class ThirdPersonCamera : MonoBehaviour
             return;
 
         InheritSupportYaw();
+        runBlend = Mathf.SmoothDamp(runBlend, movement != null ? movement.RunCameraWeight : 0f,
+            ref runBlendVelocity, runEffectSmoothTime);
+        if (viewCamera != null) viewCamera.fieldOfView = baseFov * Mathf.Lerp(1f, runFovMultiplier, runBlend);
 
         Vector2 mouseDelta = Mouse.current != null ? Mouse.current.delta.ReadValue() : Vector2.zero;
         yaw += mouseDelta.x * sensitivity;
@@ -110,13 +136,14 @@ public class ThirdPersonCamera : MonoBehaviour
 
     float FindAllowedDistance(Vector3 pivotPoint, Vector3 castDirection)
     {
-        float allowedDistance = defaultDistance;
+        float wantedDistance = defaultDistance + modelHeight * runDistanceHeightFraction * runBlend;
+        float allowedDistance = wantedDistance;
         int hitCount = Physics.SphereCastNonAlloc(
             pivotPoint,
             collisionRadius,
             castDirection,
             collisionHits,
-            defaultDistance,
+            wantedDistance,
             collisionMask,
             QueryTriggerInteraction.Ignore
         );
@@ -127,11 +154,17 @@ public class ThirdPersonCamera : MonoBehaviour
             if (ShouldIgnore(hit.collider))
                 continue;
 
-            float hitDistance = Mathf.Clamp(hit.distance - collisionRadius, collisionRadius, defaultDistance);
+            float hitDistance = Mathf.Clamp(hit.distance - collisionRadius, collisionRadius, wantedDistance);
             allowedDistance = Mathf.Min(allowedDistance, hitDistance);
         }
 
         return allowedDistance;
+    }
+
+    void OnDisable()
+    {
+        if (viewCamera != null && baseFov > 0f) viewCamera.fieldOfView = baseFov;
+        runBlend = runBlendVelocity = 0f;
     }
 
     // The robot carrying the player is part of the camera target, not an obstacle behind it.

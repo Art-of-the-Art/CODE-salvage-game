@@ -14,11 +14,16 @@ public class PlayerFootIk : MonoBehaviour
     [SerializeField, Min(0f)] float rayStartHeight = 0.45f;
     [SerializeField, Min(0f)] float rayDistance = 0.8f;
     [SerializeField, Min(0f)] float soleHeight = 0.06f;
+    [SerializeField, HideInInspector] Vector3[] leftSolePoints;
+    [SerializeField, HideInInspector] Vector3[] rightSolePoints;
+    [SerializeField, HideInInspector] Quaternion leftGoalToBone = Quaternion.identity;
+    [SerializeField, HideInInspector] Quaternion rightGoalToBone = Quaternion.identity;
+    [SerializeField, Min(0f)] float soleSurfaceMargin = 0.008f;
 
     [Header("Smoothing")]
     [SerializeField, Min(0f)] float weightFadeSpeed = 10f;
     [SerializeField, Min(0f)] float targetFollowSpeed = 25f;
-    [SerializeField, Range(0f, 1f)] float runningIkWeight = 0.45f;
+    [SerializeField, Range(0f, 1f)] float runningIkWeight = 1f;
     [SerializeField, Min(0.01f)] float runningSpeed = 8f;
 
     [Header("Limits")]
@@ -48,6 +53,8 @@ public class PlayerFootIk : MonoBehaviour
         public Quaternion Rotation;
         public Vector3 AnimatedPosition;
         public float Lift;
+        public Vector3 GroundPoint;
+        public Vector3 GroundNormal;
         public bool HasSurface;
 
         public FootTarget(AvatarIKGoal goal)
@@ -105,20 +112,32 @@ public class PlayerFootIk : MonoBehaviour
             return 0f;
 
         // Strong placement while standing, softer correction while running so feet do not look glued.
-        float speed01 = Mathf.InverseLerp(0f, runningSpeed, animationBridge.LocomotionSpeed);
-        return Mathf.Lerp(1f, runningIkWeight, speed01);
+        // Position must reach the surface at every speed. Soft position weights
+        // leave the running clip (whose sole goes below zero) partly underground.
+        return 1f;
     }
 
     bool FindFootSurface(FootTarget foot, Vector3 characterUp)
     {
-        foot.AnimatedPosition = animator.GetIKPosition(foot.Goal);
-        Quaternion animatedRotation = animator.GetIKRotation(foot.Goal);
+        // Retargeted clips can contain IK goals collapsed under the pelvis.
+        // The animated ankle bone still contains the actual forward/backward stride.
+        var bone = animator.GetBoneTransform(foot.Goal == AvatarIKGoal.LeftFoot
+            ? HumanBodyBones.LeftFoot : HumanBodyBones.RightFoot);
+        foot.AnimatedPosition = bone.position;
+        Quaternion goalToBone = foot.Goal == AvatarIKGoal.LeftFoot ? leftGoalToBone : rightGoalToBone;
+        // Use the authored bone orientation: imported IK tracks may have stale rotations.
+        Quaternion animatedRotation = bone.rotation * Quaternion.Inverse(goalToBone);
         // Baked from the actual clip on this Avatar, and blended by the same tree.
         // A swinging foot keeps its authored clearance above the sampled surface.
         foot.Lift = Mathf.Max(0f, animator.GetFloat(
             foot.Goal == AvatarIKGoal.LeftFoot ? "leftFootLift" : "rightFootLift"));
-        Vector3 rayOrigin = foot.AnimatedPosition + characterUp * rayStartHeight;
-        float castDistance = rayStartHeight + rayDistance;
+        // Start above the character's ground plane, even if the raw clip penetrates
+        // an uphill surface. A ray starting inside the slope would miss that surface.
+        float animatedHeight = Vector3.Dot(foot.AnimatedPosition - playerRoot.position, characterUp);
+        float searchLift = Mathf.Max(rayStartHeight, 1f - animatedHeight);
+        Vector3 rayOrigin = foot.AnimatedPosition + characterUp * searchLift;
+        // A lifted running foot must still search below the root ground plane.
+        float castDistance = searchLift + Mathf.Max(0f, animatedHeight) + rayDistance;
 
         if (!TryGetClosestSurface(rayOrigin, -characterUp, castDistance, out RaycastHit hit))
         {
@@ -126,9 +145,25 @@ public class PlayerFootIk : MonoBehaviour
             return false;
         }
 
-        Vector3 wantedPosition = hit.point + characterUp * (soleHeight + foot.Lift);
+        foot.GroundPoint = hit.point;
+        foot.GroundNormal = hit.normal;
+        float bottomHeight = foot.Goal == AvatarIKGoal.LeftFoot
+            ? animator.leftFeetBottomHeight : animator.rightFeetBottomHeight;
+        Vector3 wantedPosition = hit.point + characterUp * (Mathf.Max(soleHeight, bottomHeight) + foot.Lift);
         Quaternion wantedRotation = CalculateFootRotation(animatedRotation, hit.normal);
         SmoothTargetWithSurface(foot, hit.transform, wantedPosition, wantedRotation);
+        // Predict the final bone rotation and keep the actual shoe shape above the plane.
+        // A fixed ankle height misses toes pointing down during a running stride.
+        float speed01 = Mathf.InverseLerp(0f, runningSpeed, animationBridge.LocomotionSpeed);
+        float rotationWeight = Mathf.Lerp(1f, runningIkWeight, speed01) * ikWeight;
+        Quaternion finalRotation = Quaternion.Slerp(bone.rotation, foot.Rotation * goalToBone, rotationWeight);
+        var points = foot.Goal == AvatarIKGoal.LeftFoot ? leftSolePoints : rightSolePoints;
+        float lowest = 0f;
+        if (points != null)
+            foreach (var point in points)
+                lowest = Mathf.Min(lowest, Vector3.Dot(finalRotation * Vector3.Scale(point, bone.lossyScale), hit.normal));
+        float neededHeight = (-lowest + soleSurfaceMargin) / Mathf.Max(0.5f, Vector3.Dot(characterUp, hit.normal));
+        foot.Position += characterUp * Mathf.Max(0f, neededHeight - Mathf.Max(soleHeight, bottomHeight));
         foot.HasSurface = true;
         return true;
     }
@@ -144,6 +179,8 @@ public class PlayerFootIk : MonoBehaviour
         {
             RaycastHit hit = rayHits[i];
             if (hit.collider == null || hit.collider.transform.IsChildOf(playerRoot))
+                continue;
+            if (Vector3.Dot(hit.normal, playerRoot.up) < 0.5f)
                 continue;
             if (hit.distance >= closestDistance)
                 continue;
@@ -170,7 +207,9 @@ public class PlayerFootIk : MonoBehaviour
             foot.Position = surface.TransformPoint(foot.LocalPosition);
             foot.Rotation = surface.rotation * foot.LocalRotation;
             float follow01 = 1f - Mathf.Exp(-targetFollowSpeed * Time.deltaTime);
-            foot.Position = Vector3.Lerp(foot.Position, wantedPosition, follow01);
+            // Never smooth the authored stride: delaying x/z pulls both feet under
+            // the pelvis when the gait changes. Only the terrain correction is smoothed.
+            foot.Position = wantedPosition;
             foot.Rotation = Quaternion.Slerp(foot.Rotation, wantedRotation, follow01);
         }
 
@@ -181,7 +220,7 @@ public class PlayerFootIk : MonoBehaviour
 
     Quaternion CalculateFootRotation(Quaternion animatedRotation, Vector3 surfaceNormal)
     {
-        Vector3 animatedUp = animatedRotation * Vector3.up;
+        Vector3 animatedUp = playerRoot.up;
         Vector3 limitedNormal = Vector3.RotateTowards(animatedUp, surfaceNormal,
             maxFootAngle * Mathf.Deg2Rad, 0f);
         return Quaternion.FromToRotation(animatedUp, limitedNormal) * animatedRotation;
@@ -192,10 +231,10 @@ public class PlayerFootIk : MonoBehaviour
         float wantedOffset = 0f;
         if (hasLeftFoot)
             wantedOffset = Mathf.Min(wantedOffset,
-                Vector3.Dot(leftFoot.Position - leftFoot.AnimatedPosition, characterUp));
+                Vector3.Dot(leftFoot.GroundPoint - playerRoot.position, characterUp));
         if (hasRightFoot)
             wantedOffset = Mathf.Min(wantedOffset,
-                Vector3.Dot(rightFoot.Position - rightFoot.AnimatedPosition, characterUp));
+                Vector3.Dot(rightFoot.GroundPoint - playerRoot.position, characterUp));
 
         // Lower the pelvis toward the lower support. This leaves the uphill knee
         // free to bend instead of extending both legs and lifting the downhill foot.
@@ -213,7 +252,9 @@ public class PlayerFootIk : MonoBehaviour
     {
         float footWeight = hasSurface ? ikWeight : 0f;
         animator.SetIKPositionWeight(foot.Goal, footWeight);
-        animator.SetIKRotationWeight(foot.Goal, footWeight);
+        float speed01 = Mathf.InverseLerp(0f, runningSpeed, animationBridge.LocomotionSpeed);
+        float rotationWeight = Mathf.Lerp(1f, runningIkWeight, speed01);
+        animator.SetIKRotationWeight(foot.Goal, footWeight * rotationWeight);
         bool left = foot.Goal == AvatarIKGoal.LeftFoot;
         var thigh = animator.GetBoneTransform(left ? HumanBodyBones.LeftUpperLeg : HumanBodyBones.RightUpperLeg);
         var hint = left ? AvatarIKHint.LeftKnee : AvatarIKHint.RightKnee;

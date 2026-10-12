@@ -22,8 +22,14 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] float walkSpeed = 3f;
     [SerializeField] float runSpeed = 8f;
     [SerializeField] float acceleration = 8f;
-    [SerializeField] float deceleration = 12f;
     [SerializeField] float turnSpeed = 1500f;
+    [SerializeField, Min(0.05f)] float gaitTransitionDuration = 0.4f;
+    [SerializeField, Min(0f)] float gaitPressCooldown = 1f;
+    [SerializeField, Min(0.05f)] float walkStopDuration = 0.4f;
+    [SerializeField, Min(0.05f)] float runStopDuration = 0.55f;
+    readonly GroundGaitTransition groundGait = new GroundGaitTransition();
+    public float RunCameraWeight => currentState == MoveState.Grounded
+        ? Mathf.InverseLerp(walkSpeed, runSpeed, animationBridge.LocomotionSpeed) : 0f;
 
     [Header("Jump & Gravity")]
     [SerializeField] float jumpHeight = 3f;
@@ -221,11 +227,16 @@ public class PlayerMovement : MonoBehaviour
     {
         Vector3 normal = groundProbe.GroundNormal;
         Vector3 direction = Vector3.ProjectOnPlane(currentMoveRotation * Vector3.forward, normal).normalized;
-        float speed = input.RunHeld ? runSpeed : walkSpeed;
-        Vector3 desired = direction * speed * movementInput.magnitude;
         Vector3 relative = Vector3.ProjectOnPlane(currentVelocity - previousGroundVelocity, normal);
-        float response = HasMoveInput(movementInput) ? acceleration : deceleration;
-        relative = Vector3.Lerp(relative, desired, response * Time.fixedDeltaTime);
+        float speed = groundGait.Step(HasMoveInput(movementInput), input.RunHeld,
+            relative.magnitude, walkSpeed, runSpeed,
+            HasMoveInput(movementInput) ? gaitTransitionDuration
+                : Mathf.Lerp(walkStopDuration, runStopDuration, Mathf.InverseLerp(walkSpeed, runSpeed, relative.magnitude)),
+            gaitPressCooldown, Time.fixedDeltaTime);
+        // Preserve analog input strength and smooth steering without a second speed lag.
+        Vector3 heading = Vector3.Slerp(relative.sqrMagnitude > 0.001f ? relative.normalized : direction,
+            direction, acceleration * Time.fixedDeltaTime).normalized;
+        relative = heading * speed * (HasMoveInput(movementInput) ? movementInput.magnitude : 1f);
         if (!HasMoveInput(movementInput) && relative.sqrMagnitude < 0.0001f)
             relative = Vector3.zero;
         currentVelocity = groundProbe.CurrentGroundVelocity + relative + normal * GroundStickVelocity;
@@ -397,6 +408,8 @@ public class PlayerMovement : MonoBehaviour
             climbMotor.DetachFromWall();
 
         currentState = newState;
+        groundGait.Reset(Vector3.ProjectOnPlane(currentVelocity - groundProbe.CurrentGroundVelocity,
+            groundProbe.GroundNormal).magnitude);
 
         switch (currentState)
         {
@@ -444,6 +457,7 @@ public class PlayerMovement : MonoBehaviour
         bool climbingMovement = climbingAnimation && moving;
         bool groundedAnimation = currentState == MoveState.Grounded;
         animationBridge.SetMovementState(groundedAnimation, currentVelocity.y, locomotionSpeed, climbingAnimation, climbingMovement);
+        if (groundedAnimation) animationBridge.SetGroundSpeedImmediately(locomotionSpeed);
     }
 
     // Shows the current movement and animation state in the debug HUD.
