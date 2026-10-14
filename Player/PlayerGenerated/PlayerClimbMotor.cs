@@ -37,6 +37,17 @@ public class PlayerClimbMotor : MonoBehaviour
     public Vector3 TargetPosition { get; private set; }
     public bool HasMountSurface => mountSurface != null && mountCollider != null && mountCollider.enabled && mountCollider.gameObject.activeInHierarchy;
     public Vector3 SurfaceNormal => surfaceNormal;
+    public Collider CurrentSupportCollider => HasWall ? wallCollider : HasMountSurface ? mountCollider : null;
+    public Transform CurrentSupportTransform
+    {
+        get
+        {
+            Collider support = CurrentSupportCollider;
+            return support != null && support.attachedRigidbody != null
+                ? support.attachedRigidbody.transform
+                : support != null ? support.transform : null;
+        }
+    }
 
     // Attaches the player to a steep climbable wall when they hit it with enough speed.
     public bool TryAutoStick(RaycastHit lowerHit, Vector3 currentVelocity, Rigidbody rb)

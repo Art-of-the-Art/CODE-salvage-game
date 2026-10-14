@@ -27,17 +27,19 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField, Min(0f)] float gaitPressCooldown = 1f;
     [SerializeField, Min(0.05f)] float walkStopDuration = 0.4f;
     [SerializeField, Min(0.05f)] float runStopDuration = 0.55f;
+
+    public bool IsRunning => currentState == MoveState.Grounded && groundGait.Mode == 2;
     readonly GroundGaitTransition groundGait = new GroundGaitTransition();
     public float RunCameraWeight => currentState == MoveState.Grounded
         ? Mathf.InverseLerp(walkSpeed, runSpeed, animationBridge.LocomotionSpeed) : 0f;
 
     [Header("Jump & Gravity")]
     [SerializeField] float jumpHeight = 3f;
-    [SerializeField] float gravity = -30f;
+    [SerializeField] float gravity = -48f;
     [SerializeField] float wallJumpAngleDegrees = 55f;
-    [SerializeField] float wallJumpForceMultiplier = 1.2f;
+    [SerializeField] float wallJumpForceMultiplier = 1.22f;
     [SerializeField] float groundSmoothing = 10f;
-    [SerializeField] float stationaryJumpTakeoffDelay = 0.37f;
+    [SerializeField] float stationaryJumpTakeoffDelay = 0.1f;
     [SerializeField] float stationaryJumpVisualDrop = 0.25f;
     [SerializeField] float stationaryJumpVisualRecoverDuration = 0.18f;
 

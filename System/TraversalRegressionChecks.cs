@@ -64,6 +64,8 @@ public static class TraversalRegressionChecks
         Check("Camera follows without a mouse", CameraWithoutMouse);
         Check("Camera inherits the supporting platform yaw", CameraInheritsSupportYaw);
         Check("Camera ignores the supporting robot in collision checks", CameraIgnoresSupportCollision);
+        Check("Camera inherits climbed robot motion", CameraInheritsClimbSupportMotion);
+        Check("Camera run lag uses a two-second cycle", CameraRunLagUsesTwoSecondCycle);
         Check("Locomotion stays active while its speed returns to idle", IdleTransition);
         Check("Locomotion Blend Tree has the gameplay speed thresholds", LocomotionBlendTree);
         Check("All six clips animate one shared Humanoid rig", SharedRigAnimations);
@@ -414,6 +416,70 @@ public static class TraversalRegressionChecks
         Vector3 pivotPoint = target.transform.position + Vector3.up * camera.heightOffset;
         Require(Mathf.Abs(Vector3.Distance(camera.transform.position, pivotPoint) - camera.defaultDistance) < 0.01f,
             "Robot shortened its own camera distance");
+    }
+
+    static void CameraInheritsClimbSupportMotion()
+    {
+        var robot = Create("Climbed camera support", Vector3.zero);
+        robot.layer = 3;
+        var supportBody = robot.AddComponent<Rigidbody>();
+        supportBody.isKinematic = true;
+
+        var wall = new GameObject("Climbed wall");
+        SceneManager.MoveGameObjectToScene(wall, testScene);
+        wall.layer = 3;
+        wall.transform.SetParent(robot.transform, false);
+        wall.transform.localPosition = new Vector3(0f, 4f, -2f);
+        var wallCollider = wall.AddComponent<BoxCollider>();
+        wallCollider.size = new Vector3(2f, 3f, 1f);
+
+        var target = Create("Climbing camera target", Vector3.zero);
+        var targetBody = target.AddComponent<Rigidbody>();
+        targetBody.isKinematic = true;
+        var climbMotor = target.AddComponent<PlayerClimbMotor>();
+        Set(climbMotor, "currentWall", wall.transform);
+        Set(climbMotor, "wallCollider", wallCollider);
+
+        var camera = Create("Climbing camera", Vector3.zero).AddComponent<ThirdPersonCamera>();
+        camera.player = target.transform;
+        camera.sensitivity = 0f;
+        Set(camera, "climbMotor", climbMotor);
+        Set(camera, "collisionMask", (LayerMask)(1 << 3));
+        Set(camera, "currentDistance", camera.defaultDistance);
+        Physics.SyncTransforms();
+        Invoke(camera, "LateUpdate");
+
+        robot.transform.position += Vector3.right * 3f;
+        target.transform.position += Vector3.right * 3f;
+        Physics.SyncTransforms();
+        Invoke(camera, "LateUpdate");
+
+        Vector3 pivotPoint = target.transform.position + Vector3.up * camera.heightOffset;
+        Require(Mathf.Abs(camera.transform.position.x - pivotPoint.x) < 0.01f,
+            "Camera did not inherit climbed robot translation");
+        Require(Mathf.Abs(Vector3.Distance(camera.transform.position, pivotPoint) - camera.defaultDistance) < 0.01f,
+            "Climbed robot shortened its own camera distance");
+    }
+
+static void CameraRunLagUsesTwoSecondCycle()
+    {
+        var camera = Create("Run lag camera", Vector3.zero).AddComponent<ThirdPersonCamera>();
+        camera.runLagBuildDuration = 1f;
+        camera.runLagReturnDuration = 1f;
+        var evaluate = typeof(ThirdPersonCamera).GetMethod("EvaluateRunLagCycle", Fields);
+
+        float start = (float)evaluate.Invoke(camera, new object[] { 0f });
+        float building = (float)evaluate.Invoke(camera, new object[] { 0.5f });
+        float peak = (float)evaluate.Invoke(camera, new object[] { 1f });
+        float returning = (float)evaluate.Invoke(camera, new object[] { 1.5f });
+        float finished = (float)evaluate.Invoke(camera, new object[] { 2f });
+
+        Require(Mathf.Approximately(start, 0f) && building > 0f && building < 1f,
+            "Run lag did not build during the first second");
+        Require(Mathf.Approximately(peak, 1f) && returning > 0f && returning < 1f,
+            "Run lag did not return during the second second");
+        Require(Mathf.Approximately(finished, 0f),
+            "Run lag did not finish after two seconds");
     }
     static void IdleTransition()
     {
@@ -923,6 +989,8 @@ public class CameraLifecycleValidation : MonoBehaviour
                 passed,
                 "camera lifecycle; max local jitter " + maxLocalJitter.ToString("F4")
                 + " m, yaw error " + yawError.ToString("F3") + " deg"
+                + ", inherited/expected " + inheritedYaw.ToString("F3") + "/" + expectedYaw.ToString("F3")
+                + ", grounded " + groundProbe.IsGrounded
             );
             enabled = false;
         }

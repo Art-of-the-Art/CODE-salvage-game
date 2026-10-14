@@ -10,18 +10,22 @@ public class PlayerInputReader : MonoBehaviour
     [SerializeField] string moveActionName = "Move";
     [SerializeField] string jumpActionName = "Jump";
     [SerializeField] string runActionName = "Sprint";
+    [SerializeField] string aimActionName = "Aim";
 
     PlayerInput playerInput;
     InputAction moveAction;
     InputAction jumpAction;
     InputAction runAction;
+    InputAction aimAction;
     Vector2 moveInput;
     bool jumpQueued;
     bool runHeld;
+    bool isAiming;
 
     public Vector2 MoveInput => moveInput;
     public bool HasMoveInput => moveInput.sqrMagnitude > MoveInputDeadZoneSqr;
     public bool RunHeld => runHeld;
+    public bool IsAiming => isAiming;
 
     void Awake()
     {
@@ -64,6 +68,8 @@ public class PlayerInputReader : MonoBehaviour
             jumpQueued = true;
         if (runAction != null)
             runHeld = runAction.IsPressed();
+        if (aimAction != null)
+            isAiming = aimAction.IsPressed();
     }
 
     // Preserve message-based adapters for configurations without named actions.
@@ -98,6 +104,7 @@ public class PlayerInputReader : MonoBehaviour
         moveInput = Vector2.zero;
         runHeld = false;
         jumpQueued = false;
+        isAiming = false;
     }
 
     void BindActions()
@@ -108,5 +115,6 @@ public class PlayerInputReader : MonoBehaviour
         moveAction = actions != null ? actions.FindAction(moveActionName, false) : null;
         jumpAction = actions != null ? actions.FindAction(jumpActionName, false) : null;
         runAction = actions != null ? actions.FindAction(runActionName, false) : null;
+        aimAction = actions != null ? actions.FindAction(aimActionName, false) : null;
     }
 }

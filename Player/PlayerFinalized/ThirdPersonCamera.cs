@@ -28,6 +28,11 @@ public class ThirdPersonCamera : MonoBehaviour
     float runBlend;
     float runBlendVelocity;
 
+    [Header("Running Follow")]
+    [Min(0f)] public float maxRunLagDistance = 1.4f;
+    [Min(0.01f)] public float runLagBuildDuration = 1f;
+    [Min(0.01f)] public float runLagReturnDuration = 1f;
+
     [Header("Collisions")]
     public float collisionRadius = 0.5f;
     public float collisionSmoothing = 10f;
@@ -37,8 +42,11 @@ public class ThirdPersonCamera : MonoBehaviour
     float currentDistance;
     LayerMask collisionMask;
     PlayerGroundProbe groundProbe;
+    PlayerClimbMotor climbMotor;
     Transform trackedSupport;
     Quaternion previousSupportRotation;
+    float runLagElapsed;
+    float runLagWeight;
     readonly RaycastHit[] collisionHits = new RaycastHit[24];
 
     void Awake()
@@ -59,6 +67,7 @@ public class ThirdPersonCamera : MonoBehaviour
         Cursor.visible = false;
 
         groundProbe = player.GetComponent<PlayerGroundProbe>();
+        climbMotor = player.GetComponent<PlayerClimbMotor>();
         yaw = player.eulerAngles.y;
         pitch = 0f;
         currentDistance = defaultDistance;
@@ -82,6 +91,7 @@ public class ThirdPersonCamera : MonoBehaviour
             return;
 
         InheritSupportYaw();
+        UpdateRunLag();
         runBlend = Mathf.SmoothDamp(runBlend, movement != null ? movement.RunCameraWeight : 0f,
             ref runBlendVelocity, runEffectSmoothTime);
         if (viewCamera != null) viewCamera.fieldOfView = baseFov * Mathf.Lerp(1f, runFovMultiplier, runBlend);
@@ -106,12 +116,10 @@ public class ThirdPersonCamera : MonoBehaviour
         transform.SetPositionAndRotation(pivotPoint - cameraForward * currentDistance, cameraRotation);
     }
 
-    // Keeps the same view direction relative to the floor while a platform turns.
+    // A turning support rotates the view, while translation already comes from the player root.
     void InheritSupportYaw()
     {
-        Transform support = groundProbe != null && groundProbe.IsGrounded
-            ? groundProbe.CurrentSupportTransform
-            : null;
+        Transform support = GetCurrentSupportTransform();
 
         if (support == null)
         {
@@ -134,9 +142,49 @@ public class ThirdPersonCamera : MonoBehaviour
         previousSupportRotation = support.rotation;
     }
 
+    void UpdateRunLag()
+    {
+        if (movement != null && movement.IsRunning)
+        {
+            runLagElapsed += Time.deltaTime;
+            runLagWeight = EvaluateRunLagCycle(runLagElapsed);
+            return;
+        }
+
+        runLagElapsed = 0f;
+        runLagWeight = Mathf.MoveTowards(runLagWeight, 0f, Time.deltaTime / runLagReturnDuration);
+    }
+
+    float EvaluateRunLagCycle(float elapsed)
+    {
+        if (elapsed < runLagBuildDuration)
+            return Mathf.SmoothStep(0f, 1f, elapsed / runLagBuildDuration);
+
+        float returnTime = elapsed - runLagBuildDuration;
+        return returnTime < runLagReturnDuration
+            ? Mathf.SmoothStep(1f, 0f, returnTime / runLagReturnDuration)
+            : 0f;
+    }
+
+    Transform GetCurrentSupportTransform()
+    {
+        if (groundProbe != null && groundProbe.IsGrounded)
+            return groundProbe.CurrentSupportTransform;
+        return climbMotor != null ? climbMotor.CurrentSupportTransform : null;
+    }
+
+    Collider GetCurrentSupportCollider()
+    {
+        if (groundProbe != null && groundProbe.IsGrounded)
+            return groundProbe.CurrentGroundCollider;
+        return climbMotor != null ? climbMotor.CurrentSupportCollider : null;
+    }
+
     float FindAllowedDistance(Vector3 pivotPoint, Vector3 castDirection)
     {
-        float wantedDistance = defaultDistance + modelHeight * runDistanceHeightFraction * runBlend;
+        float wantedDistance = defaultDistance
+            + modelHeight * runDistanceHeightFraction * runBlend
+            + maxRunLagDistance * runLagWeight;
         float allowedDistance = wantedDistance;
         int hitCount = Physics.SphereCastNonAlloc(
             pivotPoint,
@@ -165,6 +213,8 @@ public class ThirdPersonCamera : MonoBehaviour
     {
         if (viewCamera != null && baseFov > 0f) viewCamera.fieldOfView = baseFov;
         runBlend = runBlendVelocity = 0f;
+        runLagElapsed = runLagWeight = 0f;
+        trackedSupport = null;
     }
 
     // The robot carrying the player is part of the camera target, not an obstacle behind it.
@@ -174,10 +224,11 @@ public class ThirdPersonCamera : MonoBehaviour
             return true;
         if (candidate.transform == player || candidate.transform.IsChildOf(player))
             return true;
-        if (groundProbe == null || !groundProbe.IsGrounded || groundProbe.CurrentGroundCollider == null)
+        Collider supportCollider = GetCurrentSupportCollider();
+        if (supportCollider == null)
             return false;
 
-        Rigidbody supportBody = groundProbe.CurrentGroundCollider.attachedRigidbody;
+        Rigidbody supportBody = supportCollider.attachedRigidbody;
         return supportBody != null && candidate.attachedRigidbody == supportBody;
     }
 }

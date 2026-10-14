@@ -39,6 +39,7 @@ public class PlayerDebugHud : MonoBehaviour
         builder.Append("GroundVel: ").Append(currentGroundVelocity.magnitude.ToString("F2")).Append('\n');
         builder.Append("GroundAngle: ").Append(Vector3.Angle(groundNormal, Vector3.up).ToString("F1")).Append('\n');
         builder.Append("Parent: ").Append(parent != null ? parent.name : "none").Append('\n');
+        builder.Append("Aiming?: ").Append(isAiming).Append('\n');
         builder.Append(animationDebug);
 
         interfaceText.text = builder.ToString();
