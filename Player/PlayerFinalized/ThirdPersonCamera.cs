@@ -23,6 +23,7 @@ public class ThirdPersonCamera : MonoBehaviour
     [Min(0.01f)] public float runEffectSmoothTime = 0.2f;
     Camera viewCamera;
     PlayerMovement movement;
+    PlayerInputReader input;
     float baseFov;
     float modelHeight;
     float runBlend;
@@ -37,6 +38,11 @@ public class ThirdPersonCamera : MonoBehaviour
     public float collisionRadius = 0.5f;
     public float collisionSmoothing = 10f;
 
+    [Header("Aiming")]
+    public float aimFov = 30f;
+    public float aimDistance = 3f;
+    public float aimBlendDuration = 0.1f;
+
     float pitch;
     float yaw;
     float currentDistance;
@@ -48,6 +54,10 @@ public class ThirdPersonCamera : MonoBehaviour
     float runLagElapsed;
     float runLagWeight;
     readonly RaycastHit[] collisionHits = new RaycastHit[24];
+    [SerializeField] Vector3 aimShoulderOffset = new Vector3(0.3f, 0f, 0f);
+    [SerializeField, Range(0.01f, 1f)] float aimSensitivityMultiplier = 0.5f;
+    float aimBlend;
+    float baseSensitivity;
 
     void Awake()
     {
@@ -72,6 +82,8 @@ public class ThirdPersonCamera : MonoBehaviour
         pitch = 0f;
         currentDistance = defaultDistance;
         movement = player.GetComponent<PlayerMovement>();
+        input = player.GetComponent<PlayerInputReader>();
+        baseSensitivity = sensitivity;
         // Main uses a Pivot with a child Camera; tests may put both on one object.
         viewCamera = GetComponentInChildren<Camera>();
         if (viewCamera != null) baseFov = viewCamera.fieldOfView;
@@ -92,17 +104,34 @@ public class ThirdPersonCamera : MonoBehaviour
 
         InheritSupportYaw();
         UpdateRunLag();
-        runBlend = Mathf.SmoothDamp(runBlend, movement != null ? movement.RunCameraWeight : 0f,
-            ref runBlendVelocity, runEffectSmoothTime);
-        if (viewCamera != null) viewCamera.fieldOfView = baseFov * Mathf.Lerp(1f, runFovMultiplier, runBlend);
+
+        bool isAiming = input != null && input.IsAiming;
+        float targetAimBlend;
+        if (isAiming) targetAimBlend = 1f;
+        else targetAimBlend = 0f;
+        aimBlend = Mathf.MoveTowards(aimBlend, targetAimBlend, Time.deltaTime / Mathf.Max(0.01f, aimBlendDuration));
+        
+        runBlend = Mathf.SmoothDamp(runBlend, movement != null ? movement.RunCameraWeight : 0f, ref runBlendVelocity, runEffectSmoothTime);
+        float runWhileAiming = runBlend * (1f - aimBlend);
+        float normalFov = baseFov * Mathf.Lerp(1f, runFovMultiplier, runWhileAiming);
+        float targetFov = Mathf.Lerp(normalFov, aimFov, aimBlend);
+        if (viewCamera != null)
+            viewCamera.fieldOfView = targetFov;
 
         Vector2 mouseDelta = Mouse.current != null ? Mouse.current.delta.ReadValue() : Vector2.zero;
-        yaw += mouseDelta.x * sensitivity;
-        pitch -= mouseDelta.y * sensitivity;
+
+        float currentSensitivity = Mathf.Lerp(
+            baseSensitivity,
+            baseSensitivity * aimSensitivityMultiplier,
+            aimBlend);
+        yaw += mouseDelta.x * currentSensitivity;
+        pitch -= mouseDelta.y * currentSensitivity;
         pitch = Mathf.Clamp(pitch, minPitch, maxPitch);
 
-        Vector3 pivotPoint = player.position + Vector3.up * heightOffset;
         Quaternion cameraRotation = Quaternion.Euler(pitch, yaw, 0f);
+        Vector3 pivotPoint = player.position + Vector3.up * heightOffset;
+        Vector3 localShoulder = aimShoulderOffset * aimBlend;
+        pivotPoint += cameraRotation * localShoulder;
         Vector3 cameraForward = cameraRotation * Vector3.forward;
         Vector3 castDirection = -cameraForward;
 
@@ -182,9 +211,9 @@ public class ThirdPersonCamera : MonoBehaviour
 
     float FindAllowedDistance(Vector3 pivotPoint, Vector3 castDirection)
     {
-        float wantedDistance = defaultDistance
-            + modelHeight * runDistanceHeightFraction * runBlend
-            + maxRunLagDistance * runLagWeight;
+        float runWhileAiming = 1f - aimBlend;
+        float normalDistance = defaultDistance + modelHeight * runDistanceHeightFraction * runBlend * runWhileAiming + maxRunLagDistance * runLagWeight * runWhileAiming;
+        float wantedDistance = Mathf.Lerp(normalDistance, aimDistance, aimBlend);
         float allowedDistance = wantedDistance;
         int hitCount = Physics.SphereCastNonAlloc(
             pivotPoint,

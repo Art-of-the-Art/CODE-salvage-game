@@ -11,16 +11,21 @@ public class PlayerInputReader : MonoBehaviour
     [SerializeField] string jumpActionName = "Jump";
     [SerializeField] string runActionName = "Sprint";
     [SerializeField] string aimActionName = "Aim";
+    [SerializeField] string lockOnActionName = "LockOn";
 
     PlayerInput playerInput;
+
     InputAction moveAction;
     InputAction jumpAction;
     InputAction runAction;
     InputAction aimAction;
+    InputAction lockOnAction;
+
     Vector2 moveInput;
     bool jumpQueued;
     bool runHeld;
     bool isAiming;
+    bool lockOnQueued;
 
     public Vector2 MoveInput => moveInput;
     public bool HasMoveInput => moveInput.sqrMagnitude > MoveInputDeadZoneSqr;
@@ -70,6 +75,8 @@ public class PlayerInputReader : MonoBehaviour
             runHeld = runAction.IsPressed();
         if (aimAction != null)
             isAiming = aimAction.IsPressed();
+        if (lockOnAction != null && lockOnAction.WasPressedThisFrame())
+            lockOnQueued = true;
     }
 
     // Preserve message-based adapters for configurations without named actions.
@@ -99,12 +106,20 @@ public class PlayerInputReader : MonoBehaviour
         return wasQueued;
     }
 
+    public bool ConsumeLockOn()
+    {
+        bool wasQueued = lockOnQueued;
+        lockOnQueued = false;
+        return wasQueued;
+    }
+
     void ClearInput()
     {
         moveInput = Vector2.zero;
         runHeld = false;
         jumpQueued = false;
         isAiming = false;
+        lockOnQueued = false;
     }
 
     void BindActions()
@@ -116,5 +131,6 @@ public class PlayerInputReader : MonoBehaviour
         jumpAction = actions != null ? actions.FindAction(jumpActionName, false) : null;
         runAction = actions != null ? actions.FindAction(runActionName, false) : null;
         aimAction = actions != null ? actions.FindAction(aimActionName, false) : null;
+        lockOnAction = actions != null ? actions.FindAction(lockOnActionName, false) : null;
     }
 }

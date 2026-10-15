@@ -39,9 +39,9 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] float wallJumpAngleDegrees = 55f;
     [SerializeField] float wallJumpForceMultiplier = 1.22f;
     [SerializeField] float groundSmoothing = 10f;
-    [SerializeField] float stationaryJumpTakeoffDelay = 0.1f;
-    [SerializeField] float stationaryJumpVisualDrop = 0.25f;
-    [SerializeField] float stationaryJumpVisualRecoverDuration = 0.18f;
+    [SerializeField] float stationaryJumpTakeoffDelay = 0.15f;
+    [SerializeField] float stationaryJumpVisualDrop = 0f;
+    [SerializeField] float stationaryJumpVisualRecoverDuration = 0.1f;
 
     Rigidbody rb;
     CapsuleCollider capsule;
@@ -479,6 +479,7 @@ public class PlayerMovement : MonoBehaviour
             groundProbe.CurrentGroundVelocity,
             groundProbe.GroundNormal,
             transform.parent,
+            input.IsAiming,
             animationBridge.GetDebugInfo()
         );
     }

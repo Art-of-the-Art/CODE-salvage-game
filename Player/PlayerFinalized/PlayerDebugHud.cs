@@ -23,6 +23,7 @@ public class PlayerDebugHud : MonoBehaviour
         Vector3 currentGroundVelocity,
         Vector3 groundNormal,
         Transform parent,
+        bool isAiming,
         string animationDebug)
     {
 
