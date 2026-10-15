@@ -14,6 +14,8 @@ public class PlayerLockOn : MonoBehaviour
     [SerializeField] bool lockOnAtSceneStart = true;
 
     Transform currentTarget;
+    int targetValidationGraceFrames;
+
     readonly RaycastHit[] lineOfSightHits = new RaycastHit[32];
 
     public Transform CurrentTarget => currentTarget;
@@ -33,18 +35,24 @@ public class PlayerLockOn : MonoBehaviour
 
     void Start()
     {
-        if (lockOnAtSceneStart && currentTarget == null)
-            currentTarget = FindBestTarget();
+        if (!lockOnAtSceneStart)
+            return;
+
+        currentTarget = FindBestTarget(false, false);
+        targetValidationGraceFrames = 2;
+        if (currentTarget != null)
+            Debug.Log($"Lock On: {currentTarget.name} (automatic)", this);
     }
 
     void Update()
     {
-        if (currentTarget != null && !IsCurrentTargetValid())
+        if (targetValidationGraceFrames > 0)
+            targetValidationGraceFrames--;
+        else if (currentTarget != null && !IsCurrentTargetValid())
             ClearTarget();
 
         if (input.ConsumeLockOn())
             ToggleLockOn();
-
     }
 
     void ToggleLockOn()
@@ -59,7 +67,7 @@ public class PlayerLockOn : MonoBehaviour
             ClearTarget();
     }
 
-    Transform FindBestTarget()
+    Transform FindBestTarget(bool requireOnScreen = true, bool requireLineOfSight = true)
     {
         GameObject[] candidates = GameObject.FindGameObjectsWithTag(lockOnPointName);
         Transform bestTarget = null;
@@ -70,19 +78,22 @@ public class PlayerLockOn : MonoBehaviour
         foreach (GameObject candidate in candidates)
         {
             Transform point = candidate.transform;
-            if ((point.position - viewCamera.transform.position).sqrMagnitude > maxDistanceSqr)
+            Vector3 cameraToPoint = point.position - viewCamera.transform.position;
+            if (cameraToPoint.sqrMagnitude > maxDistanceSqr)
                 continue;
 
             Vector3 screenPoint = viewCamera.WorldToScreenPoint(point.position);
-            if (screenPoint.z <= 0f ||
+            if (requireOnScreen && (screenPoint.z <= 0f ||
                 screenPoint.x < 0f || screenPoint.x > Screen.width ||
-                screenPoint.y < 0f || screenPoint.y > Screen.height)
+                screenPoint.y < 0f || screenPoint.y > Screen.height))
                 continue;
 
-            if (!HasLineOfSight(point))
+            if (requireLineOfSight && !HasLineOfSight(point))
                 continue;
 
-            float score = ((Vector2)screenPoint - screenCenter).sqrMagnitude;
+            float score = requireOnScreen
+                ? ((Vector2)screenPoint - screenCenter).sqrMagnitude
+                : Vector3.Angle(viewCamera.transform.forward, cameraToPoint);
             if (score >= bestScore)
                 continue;
 
@@ -98,16 +109,8 @@ public class PlayerLockOn : MonoBehaviour
         if (!currentTarget.gameObject.activeInHierarchy)
             return false;
 
-        Vector3 cameraToTarget =
-            currentTarget.position - viewCamera.transform.position;
-
+        Vector3 cameraToTarget = currentTarget.position - viewCamera.transform.position;
         if (cameraToTarget.sqrMagnitude > trackingRadius * trackingRadius)
-            return false;
-
-        Vector3 viewportPoint =
-            viewCamera.WorldToViewportPoint(currentTarget.position);
-
-        if (viewportPoint.z <= 0f)
             return false;
 
         return HasLineOfSight(currentTarget);
@@ -126,11 +129,19 @@ public class PlayerLockOn : MonoBehaviour
         if (currentTarget == null)
             return false;
 
-        Vector3 point =
-            viewCamera.WorldToViewportPoint(currentTarget.position);
-
+        Vector3 cameraToTarget = currentTarget.position - viewCamera.transform.position;
+        Vector3 point = viewCamera.WorldToViewportPoint(currentTarget.position);
         if (point.z <= 0f)
-            return false;
+        {
+            Vector3 cameraForward = Vector3.ProjectOnPlane(viewCamera.transform.forward, Vector3.up);
+            Vector3 targetDirection = Vector3.ProjectOnPlane(cameraToTarget, Vector3.up);
+            if (cameraForward.sqrMagnitude < 0.0001f || targetDirection.sqrMagnitude < 0.0001f)
+                return false;
+
+            float yawError = Vector3.SignedAngle(cameraForward, targetDirection, Vector3.up);
+            viewportError.x = Mathf.Approximately(yawError, 0f) ? 1f : Mathf.Sign(yawError);
+            return true;
+        }
 
         float minimum = screenMargin;
         float maximum = 1f - screenMargin;
