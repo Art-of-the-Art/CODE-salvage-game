@@ -43,6 +43,10 @@ public class ThirdPersonCamera : MonoBehaviour
     public float aimDistance = 3f;
     public float aimBlendDuration = 0.1f;
 
+    [Header("Lock-On")]
+    [SerializeField, Min(0f)] float lockOnFollowSpeed = 240f;
+    PlayerLockOn lockOn;
+
     float pitch;
     float yaw;
     float currentDistance;
@@ -54,8 +58,8 @@ public class ThirdPersonCamera : MonoBehaviour
     float runLagElapsed;
     float runLagWeight;
     readonly RaycastHit[] collisionHits = new RaycastHit[24];
-    [SerializeField] Vector3 aimShoulderOffset = new Vector3(0.3f, 0f, 0f);
-    [SerializeField, Range(0.01f, 1f)] float aimSensitivityMultiplier = 0.5f;
+    [SerializeField] Vector3 aimShoulderOffset = new Vector3(0.3f, 0.2f, 0f);
+    [SerializeField, Range(0.01f, 1f)] float aimSensitivityMultiplier = 0.4f;
     float aimBlend;
     float baseSensitivity;
 
@@ -83,6 +87,7 @@ public class ThirdPersonCamera : MonoBehaviour
         currentDistance = defaultDistance;
         movement = player.GetComponent<PlayerMovement>();
         input = player.GetComponent<PlayerInputReader>();
+        lockOn = player.GetComponent<PlayerLockOn>();
         baseSensitivity = sensitivity;
         // Main uses a Pivot with a child Camera; tests may put both on one object.
         viewCamera = GetComponentInChildren<Camera>();
@@ -119,6 +124,9 @@ public class ThirdPersonCamera : MonoBehaviour
             viewCamera.fieldOfView = targetFov;
 
         Vector2 mouseDelta = Mouse.current != null ? Mouse.current.delta.ReadValue() : Vector2.zero;
+        if (lockOn != null)
+            mouseDelta = lockOn.ConstrainLookInput(mouseDelta);
+
 
         float currentSensitivity = Mathf.Lerp(
             baseSensitivity,
@@ -126,6 +134,7 @@ public class ThirdPersonCamera : MonoBehaviour
             aimBlend);
         yaw += mouseDelta.x * currentSensitivity;
         pitch -= mouseDelta.y * currentSensitivity;
+        UpdateLockOnTracking();
         pitch = Mathf.Clamp(pitch, minPitch, maxPitch);
 
         Quaternion cameraRotation = Quaternion.Euler(pitch, yaw, 0f);
@@ -259,5 +268,19 @@ public class ThirdPersonCamera : MonoBehaviour
 
         Rigidbody supportBody = supportCollider.attachedRigidbody;
         return supportBody != null && candidate.attachedRigidbody == supportBody;
+    }
+
+    void UpdateLockOnTracking()
+    {
+        if (lockOn == null)
+            return;
+
+        if (!lockOn.TryGetViewportError(out Vector2 viewportError))
+            return;
+
+        float followStep = lockOnFollowSpeed * Time.deltaTime;
+
+        yaw += viewportError.x * followStep;
+        pitch -= viewportError.y * followStep;
     }
 }

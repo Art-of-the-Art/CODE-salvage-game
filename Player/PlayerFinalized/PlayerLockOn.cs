@@ -1,5 +1,4 @@
 using UnityEngine;
-using System.Collections.Generic;
 
 [RequireComponent(typeof(PlayerInputReader))]
 public class PlayerLockOn : MonoBehaviour
@@ -7,16 +6,15 @@ public class PlayerLockOn : MonoBehaviour
     [Header("Lock-On Settings")]
     [SerializeField] Camera viewCamera;
     [SerializeField] PlayerInputReader input;
-    [SerializeField] LayerMask targetMask;
     [SerializeField] LayerMask occlusionMask;
-    [SerializeField, Min(0f)] float searchRadius = 50f;
-    [SerializeField, Min(1f)] float searchFovMultiplier = 1.1f;
+    [SerializeField, Min(0f)] float searchRadius = 150f;
+    [SerializeField, Min(0f)] float trackingRadius = 200f;
     [SerializeField, Range(0f, 0.49f)] float screenMargin = 0.2f;
     [SerializeField] string lockOnPointName = "LockOnPoint";
+    [SerializeField] bool lockOnAtSceneStart = true;
 
     Transform currentTarget;
-    readonly Collider[] targetCandidates = new Collider[32];
-    readonly HashSet<Transform> candidateRoots = new HashSet<Transform>();
+    readonly RaycastHit[] lineOfSightHits = new RaycastHit[32];
 
     public Transform CurrentTarget => currentTarget;
     public bool IsLockedOn => currentTarget != null;
@@ -33,24 +31,86 @@ public class PlayerLockOn : MonoBehaviour
         }
     }
 
+    void Start()
+    {
+        if (lockOnAtSceneStart && currentTarget == null)
+            currentTarget = FindBestTarget();
+    }
+
     void Update()
     {
+        if (currentTarget != null && !IsCurrentTargetValid())
+            ClearTarget();
+
         if (input.ConsumeLockOn())
-            ToggleLockOn(); 
+            ToggleLockOn();
+
     }
 
     void ToggleLockOn()
     {
         if (currentTarget == null)
+        {
             currentTarget = FindBestTarget();
+            string result = currentTarget != null ? currentTarget.name : "no visible target";
+            Debug.Log($"Lock On: {result}", this);
+        }
         else
             ClearTarget();
     }
 
     Transform FindBestTarget()
     {
-        // TODO: collect robot colliders, then compare their LockOnPoint children.
-        return null;
+        GameObject[] candidates = GameObject.FindGameObjectsWithTag(lockOnPointName);
+        Transform bestTarget = null;
+        float bestScore = float.PositiveInfinity;
+        Vector2 screenCenter = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+        float maxDistanceSqr = searchRadius * searchRadius;
+
+        foreach (GameObject candidate in candidates)
+        {
+            Transform point = candidate.transform;
+            if ((point.position - viewCamera.transform.position).sqrMagnitude > maxDistanceSqr)
+                continue;
+
+            Vector3 screenPoint = viewCamera.WorldToScreenPoint(point.position);
+            if (screenPoint.z <= 0f ||
+                screenPoint.x < 0f || screenPoint.x > Screen.width ||
+                screenPoint.y < 0f || screenPoint.y > Screen.height)
+                continue;
+
+            if (!HasLineOfSight(point))
+                continue;
+
+            float score = ((Vector2)screenPoint - screenCenter).sqrMagnitude;
+            if (score >= bestScore)
+                continue;
+
+            bestScore = score;
+            bestTarget = point;
+        }
+
+        return bestTarget;
+    }
+
+    bool IsCurrentTargetValid()
+    {
+        if (!currentTarget.gameObject.activeInHierarchy)
+            return false;
+
+        Vector3 cameraToTarget =
+            currentTarget.position - viewCamera.transform.position;
+
+        if (cameraToTarget.sqrMagnitude > trackingRadius * trackingRadius)
+            return false;
+
+        Vector3 viewportPoint =
+            viewCamera.WorldToViewportPoint(currentTarget.position);
+
+        if (viewportPoint.z <= 0f)
+            return false;
+
+        return HasLineOfSight(currentTarget);
     }
 
     bool TryProjectCandidate(Transform lockOnPoint, out Vector3 screenPoint)
@@ -60,16 +120,80 @@ public class PlayerLockOn : MonoBehaviour
         return false;
     }
 
-    bool IsInsideSafeZone(Vector3 screenPoint)
+    public bool TryGetViewportError(out Vector2 viewportError)
     {
-        // TODO: compare x/y with the 20% screen margins.
-        return false;
+        viewportError = Vector2.zero;
+        if (currentTarget == null)
+            return false;
+
+        Vector3 point =
+            viewCamera.WorldToViewportPoint(currentTarget.position);
+
+        if (point.z <= 0f)
+            return false;
+
+        float minimum = screenMargin;
+        float maximum = 1f - screenMargin;
+
+        if (point.x < minimum)
+            viewportError.x = point.x - minimum;
+        else if (point.x > maximum)
+            viewportError.x = point.x - maximum;
+
+        if (point.y < minimum)
+            viewportError.y = point.y - minimum;
+        else if (point.y > maximum)
+            viewportError.y = point.y - maximum;
+
+        return true;
+    }
+    
+    public Vector2 ConstrainLookInput(Vector2 lookInput)
+    {
+        if (currentTarget == null)
+            return lookInput;
+
+        Vector3 point = viewCamera.WorldToViewportPoint(currentTarget.position);
+        if (point.z <= 0f)
+            return lookInput;
+
+        float minimum = screenMargin;
+        float maximum = 1f - screenMargin;
+
+        // Camera rotation moves the target in the opposite screen direction.
+        if ((point.x <= minimum && lookInput.x > 0f) ||
+            (point.x >= maximum && lookInput.x < 0f))
+            lookInput.x = 0f;
+
+        if ((point.y <= minimum && lookInput.y > 0f) ||
+            (point.y >= maximum && lookInput.y < 0f))
+            lookInput.y = 0f;
+
+        return lookInput;
     }
 
     bool HasLineOfSight(Transform lockOnPoint)
     {
-        // TODO: raycast from viewCamera to lockOnPoint without rejecting its own robot.
-        return false;
+        Vector3 origin = viewCamera.transform.position;
+        Vector3 toTarget = lockOnPoint.position - origin;
+        float distance = toTarget.magnitude;
+        if (distance <= 0.001f) return true;
+
+        RobotMovement robot = lockOnPoint.GetComponentInParent<RobotMovement>();
+        Transform targetRoot = robot != null ? robot.transform : lockOnPoint.parent;
+        int hitCount = Physics.RaycastNonAlloc(
+            origin, toTarget / distance, lineOfSightHits,
+            distance, occlusionMask, QueryTriggerInteraction.Ignore);
+
+        for (int i = 0; i < hitCount; i++)
+        {
+            Transform hit = lineOfSightHits[i].collider.transform;
+            if (hit == transform || hit.IsChildOf(transform)) continue;
+            if (hit == targetRoot || hit.IsChildOf(targetRoot)) continue;
+            return false;
+        }
+
+        return true;
     }
 
     void ClearTarget()
